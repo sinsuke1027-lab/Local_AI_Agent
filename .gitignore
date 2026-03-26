@@ -1,0 +1,35 @@
+# 環境変数・APIキー（絶対にcommitしない）
+.env
+.env.*
+mcp_config.json
+
+# 仮想環境
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# データベース
+*.db
+*.sqlite
+
+# ログ
+*.log
+logs/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# テスト用
+test-app*/
+fix_*.py
