@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI
+from typing import Optional
 from pydantic import BaseModel
 from src.graph import orchestrator
 from langfuse import Langfuse
@@ -28,6 +29,8 @@ class TaskRequest(BaseModel):
     project_id:  str = "default"
     requester:   str = "unknown"
     channel_id:  str = ""
+    model: Optional[str] = os.getenv("DEFAULT_AI_MODEL", "qwen2.5-coder:14b")
+    thread_id: Optional[str] = "default_thread" 
 
 
 class StatusResponse(BaseModel):
@@ -39,6 +42,21 @@ class StatusResponse(BaseModel):
 @app.post("/task")
 async def create_task(req: TaskRequest):
     task_id = str(uuid.uuid4())[:8]
+
+    # === 【ここから追加】前回の記憶をグラフから直接引っ張り出す ===
+    config_for_memory = {"configurable": {"thread_id": req.thread_id}}
+    past_memory = ""
+    try:
+        current_state = orchestrator.get_state(config_for_memory)
+        if current_state and hasattr(current_state, 'values') and current_state.values:
+            past_memory = current_state.values.get("result", "")
+    except Exception:
+        pass  # 初回実行時などは無視する
+
+    # 指示文に過去の記憶を強制的に結合する
+    final_instruction = req.instruction
+    if past_memory:
+        final_instruction += f"\n\n【前回の作業結果（これを前提に作業してください）】\n{past_memory[-2000:]}"
 
     # 初期stateを作成
     initial_state = {
@@ -62,7 +80,10 @@ async def create_task(req: TaskRequest):
     # LangGraphを実行（Langfuseトレース付き）
     result = orchestrator.invoke(
         initial_state,
-        config={"callbacks": [langfuse_handler]}
+	config={
+            "callbacks": [langfuse_handler],
+            "configurable": {"thread_id": req.thread_id} 
+        }
     )
 
     return {

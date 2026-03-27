@@ -74,21 +74,48 @@ def coder_agent(state: TaskState) -> TaskState:
     """選択されたモデルでタスクを実行する"""
     model       = get_model(state["model_used"])
     instruction = state["instruction"]
+    retry_count = state.get("retry_count", 0)          # ←追加
+    previous_result = state.get("result", "")          # ←追加
 
     # コンテキストを取得
     context = state.get("diff_summary", "")
     context_section = f"\n\n{context}" if context else ""
 
-    prompt = f"""あなたは優秀なPythonソフトウェアエンジニアです。
+    # リトライ時は過去のエラー情報をプロンプトに含める ===
+    error_feedback = ""
+    if retry_count > 0 and previous_result:
+        error_feedback = (
+            f"\n\n【前回のテスト実行で以下のエラーが発生しました。原因を分析してコードを修正してください】\n"
+            f"{previous_result[-3000:]}\n"
+        )
+    # 通常の会話の続きの場合は、過去の記憶を読み込ませる
+    memory_feedback = ""
+    # リトライではなく、かつ過去の履歴（previous_result）が残っている場合
+    if retry_count == 0 and previous_result:
+        memory_feedback = (
+            f"\n\n【過去の作業の記憶（コンテキスト）】\n"
+            f"あなたは直前に以下の作業を完了しています：\n"
+            f"{previous_result[-3000:]}\n\n"
+            f"※今回の指示（「さっきの〜」「それを〜」など）は、この過去の作業を指しています。文脈を引き継いで回答してください。\n"
+        )
+
+    prompt = f"""あなたは優秀なAIソフトウェアエンジニアです。
 以下のタスクを実行してください。
 
 タスク：{instruction}
 {context_section}
+{error_feedback}
 
-上記の情報を参考にして、実装方針・変更内容・注意点を含めて回答してください。
-必ずPythonで実装してください。
-Web検索結果がある場合はその情報を活用してください。
-既存コードがある場合はそのスタイルに合わせて実装してください。"""
+
+【指示】
+タスクの目的を的確に判断し、以下のルールに従って回答してください。
+1. 「調査」「要約」「説明」のみを求めているタスクの場合：
+   コードは一切記述せず、分かりやすいテキストだけで結果をまとめてください。
+2. 「作成」「実装」「テスト」「スクリプト」などを求めているタスクの場合：
+   実装方針を説明した上で、必ずPythonで実装コードを出力してください。
+   また、pytest等の実行が必要な場合は、必ず「CMD: pytest ファイル名」の形式で記述してください。
+3. Web検索やブラウザ取得結果がある場合は、その情報を最大限活用してください。
+4. 既存コードがある場合はそのスタイルに合わせてください。"""
 
     try:
         response    = model.invoke(prompt)
@@ -336,15 +363,20 @@ def bash_agent(state: TaskState) -> TaskState:
         commands = re.findall(pattern, output)
 
         results = []
+        has_command_error = False  # ← 追加：コマンドエラーを追跡するフラグ
+
         for cmd in commands:
             cmd = cmd.strip()
 
-            # 仮想環境のパスに変換
             if venv_paths:
                 cmd = runner.resolve_command(cmd, venv_paths)
 
             success, stdout, stderr = runner.run(cmd, cwd=project_dir)
             status = "✅" if success else "❌"
+            
+            if not success:
+                has_command_error = True  # ← 追加：失敗したらフラグを立てる
+                
             output_text = stdout.strip() or stderr.strip()
             results.append(f"{status} {cmd}\n{output_text[:300]}")
 
@@ -363,15 +395,18 @@ def bash_agent(state: TaskState) -> TaskState:
         if syntax_results:
             bash_result += "\n\n【構文チェック】\n" + "\n".join(syntax_results)
 
-        # 構文エラーがある場合はフラグを立てる
         has_syntax_error = any("構文エラー" in r for r in syntax_results)
+        
+        # 追加：コマンドエラーか構文エラーのどちらかがあればリトライ
+        needs_retry = has_command_error or has_syntax_error
 
         return {
             **state,
             "result":           state.get("result", "") + f"\n\n【コマンド実行結果】\n{bash_result}",
-            "next_node":        "retry" if has_syntax_error else "save_history",
+            "next_node":        "retry" if needs_retry else "save_history",
             "retry_count":      state.get("retry_count", 0),
         }
+
     except Exception as e:
         return {
             **state,
@@ -421,3 +456,38 @@ def search_agent(state: TaskState) -> TaskState:
             **state,
             "error_message": f"検索エラー: {str(e)}",
         }
+
+# ── ノード⑧ ブラウザエージェント ────────────────
+def browser_agent(state: TaskState) -> TaskState:
+    """指定されたURLをブラウザで読み込み、コンテンツをコンテキストに追加する"""
+    import re
+    from src.browser_client import BrowserClient
+
+    instruction = state["instruction"]
+
+    # タスク指示からURLを抽出（http:// または https:// から始まる文字列）
+    urls = re.findall(r'https?://[^\s]+', instruction)
+
+    if not urls:
+        return state
+
+    client = BrowserClient()
+    browser_results = []
+
+    for url in urls:
+        try:
+            content = client.get_page_content(url)
+            browser_results.append(f"【ブラウザ取得結果: {url}】\n{content}")
+        except Exception as e:
+            browser_results.append(f"【ブラウザ取得エラー: {url}】\n{str(e)}")
+
+    combined_browser_info = "\n\n".join(browser_results)
+
+    # 既存のコンテキスト（diff_summary）に追記して、coder_agentに渡す
+    existing = state.get("diff_summary", "")
+    new_context = f"{existing}\n\n{combined_browser_info}" if existing else combined_browser_info
+
+    return {
+        **state,
+        "diff_summary": new_context,
+    }

@@ -13,7 +13,7 @@ class BashRunner:
         "pytest", "uvicorn", "which", "pwd",
         "touch", "cp", "mv", "rm",
         "brew", "curl", "find", "grep",
-        "flask", "bash", "sh",
+        "flask", "bash", "sh", "playwright"
     ]
 
     def __init__(self, work_dir: str = None):
