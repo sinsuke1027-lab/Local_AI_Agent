@@ -2,10 +2,14 @@ import uuid
 import os
 import asyncio
 import json
+import logging
 from datetime import datetime
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from src.state import TaskState
+from src.task_history_indexer import TaskHistoryIndexer
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -204,6 +208,21 @@ def task_analyzer(state: TaskState) -> TaskState:
         full_context_parts.append(lesson_text)
     full_context = "\n\n".join(full_context_parts)
 
+    # --- P8: 過去の成功パターン検索 ---
+    success_patterns = ""
+    try:
+        indexer = TaskHistoryIndexer()
+        success_patterns = indexer.get_success_patterns(
+            task_description=state.get("instruction", ""),
+            n=3,
+        )
+        if success_patterns:
+            logger.info("Found success patterns for task (length=%d)", len(success_patterns))
+        else:
+            logger.info("No success patterns found for this task")
+    except Exception as e:
+        logger.warning("Failed to search success patterns: %s", e)
+
     return {
         **state,
         "task_id":              state.get("task_id") or str(uuid.uuid4())[:8],
@@ -212,6 +231,7 @@ def task_analyzer(state: TaskState) -> TaskState:
         "retry_count":          state.get("retry_count") or 0,
         "needs_file_operation": needs_file,
         "diff_summary":         full_context,
+        "success_patterns":     success_patterns,
     }
 
 
@@ -250,6 +270,18 @@ def coder_agent(state: TaskState) -> TaskState:
             f"※今回の指示（「さっきの〜」「それを〜」など）は、この過去の作業を指しています。文脈を引き継いで回答してください。\n"
         )
 
+    # --- P8: 成功パターンをプロンプトに注入 ---
+    success_patterns = state.get("success_patterns", "")
+    success_patterns_section = ""
+    if success_patterns:
+        success_patterns_section = f"""
+
+## 過去の成功パターン（参考）
+以下は類似タスクで成功した過去の実装例です。参考にしてください:
+
+{success_patterns}
+"""
+
     prompt = f"""あなたは優秀なAIソフトウェアエンジニアです。
 以下のタスクを実行してください。
 
@@ -258,7 +290,7 @@ def coder_agent(state: TaskState) -> TaskState:
 {constitution_section}
 {error_feedback}
 {memory_feedback}
-
+{success_patterns_section}
 【指示】
 タスクの目的を的確に判断し、以下のルールに従って回答してください。
 1. 「調査」「要約」「説明」のみを求めているタスクの場合：

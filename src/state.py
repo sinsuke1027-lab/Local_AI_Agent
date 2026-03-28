@@ -33,8 +33,11 @@ class TaskState(TypedDict):
     needs_file_operation: Optional[bool]
 
     # 内部制御
-    next_node:      Optional[str]
-    error_message:  Optional[str]
-    result:         Optional[str]
-    channel_id:     Optional[str]
-    requester:      Optional[str]
+    next_node:        Optional[str]
+    error_message:    Optional[str]
+    result:           Optional[str]
+    channel_id:       Optional[str]
+    requester:        Optional[str]
+
+    # P8: タスク履歴RAG
+    success_patterns: Optional[str]

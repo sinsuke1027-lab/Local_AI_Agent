@@ -222,6 +222,15 @@ class BatchRunner:
         """夜間バッチの完全実行（実行→レポート→Discord通知）"""
         self._log("=== 夜間バッチ開始 ===")
 
+        # --- P8: バッチ実行前にタスク履歴をインデックス更新 ---
+        from src.task_history_indexer import TaskHistoryIndexer
+        try:
+            indexer = TaskHistoryIndexer()
+            count = indexer.index_recent(hours=24)
+            self._log(f"Pre-batch index: {count} tasks indexed")
+        except Exception as e:
+            self._log(f"Pre-batch index failed: {e}")
+
         # 全プロジェクトのTODOを実行
         all_results = self.run_all_active(
             max_tasks_per_project=max_tasks_per_project,
