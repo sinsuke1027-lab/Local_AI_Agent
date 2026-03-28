@@ -145,3 +145,4 @@ beautifulsoup4==4.14.3
 pytest==9.0.2
 pytest-base-url==2.1.0
 pytest-playwright==0.7.2
+watchdog==6.0.0
