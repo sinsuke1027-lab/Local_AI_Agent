@@ -4,31 +4,121 @@
       "id": "T001",
       "title": "各モジュールのドキュメンテーションを更新",
       "description": "プロジェクト内の各Pythonファイルとディレクトリのドキュメンテーションを最新に保つ。特に不明なファイル（index.html）については解明する。",
-      "status": "TODO",
+      "status": "DONE",
       "priority": 5,
       "depends_on": [],
       "created_at": "2026-03-28 12:40",
-      "completed_at": null
+      "completed_at": "2026-03-28 23:46"
     },
     {
       "id": "T002",
       "title": "テストスクリプトの統合",
       "description": "既存のテストスクリプト（test_calc.py, test_example.py, test_fail.py）をsrcディレクトリに移動し、統一された管理システムに連携する。",
-      "status": "TODO",
+      "status": "DONE",
       "priority": 4,
       "depends_on": [],
       "created_at": "2026-03-28 12:40",
-      "completed_at": null
+      "completed_at": "2026-03-28 23:37"
     },
     {
       "id": "T003",
       "title": "デプロイメントガイドの作成",
       "description": "README.mdにデプロイメント手順を追加する。これにはDockerを使用したデプロイ方法やクラウドサービスへのデプロイ方法も含める。",
-      "status": "TODO",
+      "status": "FAILED",
       "priority": 3,
       "depends_on": [],
       "created_at": "2026-03-28 12:40",
+      "completed_at": "2026-03-28 23:10"
+    },
+    {
+      "id": "T004",
+      "title": "Calculatorクラスにaddメソッドを追加",
+      "description": "テストスクリプトtest_calc.pyで発生したAttributeErrorの原因である、Calculatorクラスにaddメソッドを追加する。",
+      "status": "FAILED",
+      "priority": 1,
+      "depends_on": [],
+      "created_at": "2026-03-28 15:58",
+      "completed_at": "2026-03-28 18:37"
+    },
+    {
+      "id": "T005",
+      "title": "修正後コードのテスト実行",
+      "description": "addメソッドが正しく実装されたcalc.pyを再度pytestでテスト実行し、エラーが解消されていることを確認する。",
+      "status": "IN_PROGRESS",
+      "priority": 2,
+      "depends_on": [],
+      "created_at": "2026-03-28 15:58",
       "completed_at": null
+    },
+    {
+      "id": "T006",
+      "title": "関連するドキュメンテーションの更新",
+      "description": "修正したCalculatorクラスや追加したaddメソッドについて、適切なドキュメンテーションをsrc/calc.pyに記述し、各モジュールのドキュメンテーションを更新する。",
+      "status": "FAILED",
+      "priority": 3,
+      "depends_on": [],
+      "created_at": "2026-03-28 15:58",
+      "completed_at": "2026-03-28 23:20"
+    },
+    {
+      "id": "T007",
+      "title": "Calculatorクラスにsubtractメソッドを追加",
+      "description": "Calculatorクラスに引き算を行うsubtractメソッドを実装し、2つの数値の差を返す機能を追加します。",
+      "status": "DONE",
+      "priority": 8,
+      "depends_on": [],
+      "created_at": "2026-03-28 18:41",
+      "completed_at": "2026-03-29 00:04"
+    },
+    {
+      "id": "T008",
+      "title": "テストスクリプトでmultiplyとdivideメソッドの単体テストを作成",
+      "description": "Calculatorクラスにmultiply（掛け算）とdivide（割り算）メソッドが存在することを確認するための単体テストコードをtest_calc.pyに追加します。",
+      "status": "DONE",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-28 18:41",
+      "completed_at": "2026-03-28 23:59"
+    },
+    {
+      "id": "T009",
+      "title": "pytestを使用した統合テストスクリプトの作成",
+      "description": "pytestを使用して、Calculatorクラスの全メソッドに対する統合テストスクリプトを作成し、一貫性と正しさを検証します。",
+      "status": "DONE",
+      "priority": 6,
+      "depends_on": [],
+      "created_at": "2026-03-28 18:41",
+      "completed_at": "2026-03-28 23:53"
+    },
+    {
+      "id": "T010",
+      "title": "Calculatorクラスにsubtractメソッドを実装",
+      "description": "calc.pyファイルにCalculatorクラスにsubtractメソッドを追加し、test_calc.pyでsubtractメソッドの単体テストを作成します。",
+      "status": "DONE",
+      "priority": 1,
+      "depends_on": [],
+      "created_at": "2026-03-28 18:45",
+      "completed_at": "2026-03-28 20:53"
+    },
+    {
+      "id": "T011",
+      "title": "multiplyとdivideメソッドの単体テストを作成",
+      "description": "calc.pyファイルにCalculatorクラスにmultiplyとdivideメソッドを追加し、test_calc.pyでこれらのメソッドの単体テストを作成します。",
+      "status": "DONE",
+      "priority": 2,
+      "depends_on": [],
+      "created_at": "2026-03-28 18:45",
+      "completed_at": "2026-03-28 20:57"
+    },
+    {
+      "id": "T012",
+      "title": "pytestを使用した統合テストスクリプトの作成",
+      "description": "すべてのモジュールが正しく動作することを確認するために、pytestを使用して統合テストスクリプトを作成します。",
+      "status": "FAILED",
+      "priority": 3,
+      "depends_on": [],
+      "created_at": "2026-03-28 18:45",
+      "completed_at": "2026-03-28 23:30"
     }
   ]
 }

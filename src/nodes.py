@@ -3,17 +3,62 @@ import os
 import asyncio
 import json
 from datetime import datetime
+from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from src.state import TaskState
 
+load_dotenv()
 
 # ── モデル設定 ──────────────────────────────
 OLLAMA_BASE_URL = "http://localhost:11434"
 MODEL_DEFAULT   = "qwen2.5-coder:14b"
 MODEL_DEBUG     = "deepseek-r1:14b"
+MODEL_FAST      = "gemini-2.5-flash"
+MODEL_LOCAL_FAST = "qwen2.5-coder:7b"
+
+
+class GeminiWrapper:
+    """Google公式SDKをlangchain風のインターフェースで使うラッパー"""
+
+    def __init__(self, model_name: str):
+        from google import genai
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY が .env に設定されていません")
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = model_name
+
+    def invoke(self, prompt: str):
+        """langchainのmodel.invoke()と同じインターフェースで呼び出す"""
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+        )
+
+        # langchain風のレスポンスオブジェクトを返す
+        class GeminiResponse:
+            def __init__(self, text, usage):
+                self.content = text
+                self.usage_metadata = usage
+
+        # トークン数を取得
+        usage = {}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            usage = {
+                "total_tokens": (
+                    getattr(response.usage_metadata, "total_token_count", 0) or
+                    (getattr(response.usage_metadata, "prompt_token_count", 0) or 0) +
+                    (getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
+                )
+            }
+
+        return GeminiResponse(response.text, usage)
 
 
 def get_model(model_name: str):
+    """モデル名に応じてOllamaまたはGeminiのモデルを返す"""
+    if "gemini" in model_name.lower():
+        return GeminiWrapper(model_name)
     return ChatOllama(
         model=model_name,
         base_url=OLLAMA_BASE_URL,

@@ -23,6 +23,8 @@
   "defaults": {
     "model": "qwen2.5-coder:14b",
     "model_debug": "deepseek-r1:14b",
+    "model_fast": "gemini-2.5-flash",
+    "model_local_fast": "qwen2.5-coder:7b",
     "model_confidential": "qwen2.5-coder:14b",
     "python_version": "3.11",
     "venv_name": ".venv"
