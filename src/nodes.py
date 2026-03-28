@@ -20,18 +20,101 @@ def get_model(model_name: str):
     )
 
 
+def _resolve_project_dir(state: TaskState) -> str:
+    """stateからプロジェクトディレクトリを推定する"""
+    import re
+    instruction = state.get("instruction", "")
+
+    # 絶対パスを検索
+    match = re.search(r"/Users/[^/\s]+/projects/([^/\s,、。]+)", instruction)
+    if match:
+        return os.path.expanduser(f"~/projects/{match.group(1)}")
+
+    # ~/projects/ 形式を検索
+    match = re.search(r"~/projects/([^/\s,、。]+)", instruction)
+    if match:
+        return os.path.expanduser(f"~/projects/{match.group(1)}")
+
+    # project_idから推定
+    project_id = state.get("project_id", "")
+    if project_id and project_id != "default":
+        return os.path.expanduser(f"~/projects/{project_id}")
+
+    return os.path.expanduser("~/projects/langgraph-orchestrator")
+
+
+def _load_constitution(project_dir: str) -> str:
+    """共通憲法 + プロジェクト固有憲法を読み込む"""
+    sections = []
+
+    # 共通憲法
+    global_path = os.path.expanduser(
+        "~/projects/langgraph-orchestrator/constitution.md"
+    )
+    if os.path.exists(global_path):
+        try:
+            with open(global_path, "r", encoding="utf-8") as f:
+                sections.append(f.read()[:2000])
+        except Exception:
+            pass
+
+    # プロジェクト固有憲法
+    for name in ["constitution.md", "project_constitution.md"]:
+        proj_path = os.path.join(project_dir, name)
+        if os.path.exists(proj_path):
+            try:
+                with open(proj_path, "r", encoding="utf-8") as f:
+                    sections.append(f.read()[:1500])
+            except Exception:
+                pass
+
+    if sections:
+        return "\n\n".join(sections)
+    return ""
+
+
+def _get_model_for_project(project_dir: str, is_debug: bool = False) -> str:
+    """projects.jsonからプロジェクトに適したモデルを決定する"""
+    projects_path = os.path.expanduser(
+        "~/projects/langgraph-orchestrator/projects.json"
+    )
+
+    if os.path.exists(projects_path):
+        try:
+            with open(projects_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            project_name = os.path.basename(project_dir)
+            project_info = data.get("projects", {}).get(project_name, {})
+
+            # model_overrideがあれば最優先
+            if project_info.get("model_override"):
+                return project_info["model_override"]
+
+            # 機密プロジェクトはローカルモデル強制
+            if project_info.get("confidential", False):
+                return data.get("defaults", {}).get(
+                    "model_confidential", MODEL_DEFAULT
+                )
+        except Exception:
+            pass
+
+    return MODEL_DEBUG if is_debug else MODEL_DEFAULT
+
+
 # ── ノード① タスク分析 ───────────────────────
 def task_analyzer(state: TaskState) -> TaskState:
     """タスクを分析してモデルと次のノードを決定する"""
     instruction = state["instruction"].lower()
+    project_dir = _resolve_project_dir(state)
 
     # 複雑度スコアリング
     is_debug = any(w in instruction for w in [
         "バグ", "エラー", "デバッグ", "bug", "error", "fix"
     ])
 
-    # モデル選択
-    model = MODEL_DEBUG if is_debug else MODEL_DEFAULT
+    # プロジェクト設定に基づくモデル選択
+    model = _get_model_for_project(project_dir, is_debug)
 
     # ファイル操作が必要かどうかを判定
     needs_file = any(w in instruction for w in [
@@ -43,20 +126,38 @@ def task_analyzer(state: TaskState) -> TaskState:
     context_summary = ""
     try:
         from src.chroma_search import ChromaSearch
-        import re as _re2
         searcher = ChromaSearch()
-
-        # プロジェクトパスを推定
-        proj_match = _re2.search(r"~/projects/([^/\s,、。]+)|/Users/[^/]+/projects/([^/\s,、。]+)", state.get("instruction", ""))
-        if proj_match:
-            proj_name = proj_match.group(1) or proj_match.group(2)
-            proj_path = os.path.expanduser(f"~/projects/{proj_name}")
-        else:
-            proj_path = os.path.expanduser("~/projects/langgraph-orchestrator")
-
-        context_summary = searcher.get_context_summary(instruction, project_path=proj_path)
+        context_summary = searcher.get_context_summary(instruction, project_path=project_dir)
     except Exception:
         context_summary = ""
+
+    # context.mdを読み込み/生成
+    project_context = ""
+    try:
+        from src.context_generator import ContextGenerator
+        generator = ContextGenerator()
+        project_context = generator.load_context(project_dir)
+    except Exception:
+        project_context = ""
+
+    # 教訓を検索
+    lesson_text = ""
+    try:
+        from src.lesson_manager import LessonManager
+        manager = LessonManager()
+        lesson_text = manager.get_prompt_injection(instruction, project_dir=project_dir)
+    except Exception:
+        lesson_text = ""
+
+    # 全コンテキストを結合
+    full_context_parts = []
+    if project_context:
+        full_context_parts.append(f"【プロジェクト情報】\n{project_context[:1500]}")
+    if context_summary:
+        full_context_parts.append(context_summary)
+    if lesson_text:
+        full_context_parts.append(lesson_text)
+    full_context = "\n\n".join(full_context_parts)
 
     return {
         **state,
@@ -65,7 +166,7 @@ def task_analyzer(state: TaskState) -> TaskState:
         "started_at":           datetime.now().isoformat(),
         "retry_count":          state.get("retry_count") or 0,
         "needs_file_operation": needs_file,
-        "diff_summary":         context_summary,
+        "diff_summary":         full_context,
     }
 
 
@@ -74,23 +175,28 @@ def coder_agent(state: TaskState) -> TaskState:
     """選択されたモデルでタスクを実行する"""
     model       = get_model(state["model_used"])
     instruction = state["instruction"]
-    retry_count = state.get("retry_count", 0)          # ←追加
-    previous_result = state.get("result", "")          # ←追加
+    retry_count = state.get("retry_count", 0)
+    previous_result = state.get("result", "")
+    project_dir = _resolve_project_dir(state)
 
     # コンテキストを取得
     context = state.get("diff_summary", "")
     context_section = f"\n\n{context}" if context else ""
 
-    # リトライ時は過去のエラー情報をプロンプトに含める ===
+    # 憲法を読み込み
+    constitution = _load_constitution(project_dir)
+    constitution_section = f"\n\n【遵守事項（憲法）】\n{constitution}" if constitution else ""
+
+    # リトライ時は過去のエラー情報をプロンプトに含める
     error_feedback = ""
     if retry_count > 0 and previous_result:
         error_feedback = (
             f"\n\n【前回のテスト実行で以下のエラーが発生しました。原因を分析してコードを修正してください】\n"
             f"{previous_result[-3000:]}\n"
         )
+
     # 通常の会話の続きの場合は、過去の記憶を読み込ませる
     memory_feedback = ""
-    # リトライではなく、かつ過去の履歴（previous_result）が残っている場合
     if retry_count == 0 and previous_result:
         memory_feedback = (
             f"\n\n【過去の作業の記憶（コンテキスト）】\n"
@@ -104,8 +210,9 @@ def coder_agent(state: TaskState) -> TaskState:
 
 タスク：{instruction}
 {context_section}
+{constitution_section}
 {error_feedback}
-
+{memory_feedback}
 
 【指示】
 タスクの目的を的確に判断し、以下のルールに従って回答してください。
@@ -140,11 +247,10 @@ def coder_agent(state: TaskState) -> TaskState:
         }
 
 
-# ── ノード③ 履歴保存 ────────────────────────
+# ── ノード③ 履歴保存 + 教訓抽出 + 次タスク提案 ──
 def save_history(state: TaskState) -> TaskState:
-    """タスク履歴をSQLiteに保存する"""
+    """タスク履歴をSQLiteに保存し、必要に応じて教訓抽出と次タスク提案を行う"""
     import sqlite3
-    import os
 
     db_path = os.path.expanduser("~/.roo/task_history.db")
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -186,6 +292,48 @@ def save_history(state: TaskState) -> TaskState:
     conn.commit()
     conn.close()
 
+    project_dir = _resolve_project_dir(state)
+
+    # エラーがあった場合、教訓を自動抽出
+    error_message = state.get("error_message", "")
+    if error_message and state.get("retry_count", 0) > 0:
+        try:
+            from src.lesson_manager import LessonManager
+            manager = LessonManager()
+            manager.extract_and_save_lesson(
+                error_message=error_message,
+                solution_result=state.get("result", ""),
+                instruction=state.get("instruction", ""),
+                project_dir=project_dir,
+            )
+        except Exception:
+            pass
+
+    # タスク成功時に次タスク提案
+    if not error_message:
+        try:
+            from src.task_planner import TaskPlanner
+            planner = TaskPlanner()
+
+            # 現在のタスクをDONEに（tasks.jsonにあれば）
+            # 次タスクを自動洗い出し
+            context_md = ""
+            try:
+                from src.context_generator import ContextGenerator
+                gen = ContextGenerator()
+                context_md = gen.load_context(project_dir)
+            except Exception:
+                pass
+
+            planner.plan_next_tasks(
+                project_dir=project_dir,
+                completed_instruction=state.get("instruction", ""),
+                completed_result=state.get("result", "")[:2000],
+                context_md=context_md,
+            )
+        except Exception:
+            pass
+
     return {
         **state,
         "completed_at": completed_at,
@@ -199,6 +347,13 @@ def reviewer_agent(state: TaskState) -> TaskState:
     instruction = state["instruction"]
     result      = state.get("result", "")
     retry_count = state.get("retry_count", 0)
+    project_dir = _resolve_project_dir(state)
+
+    # 憲法をレビュー基準に含める
+    constitution = _load_constitution(project_dir)
+    constitution_section = ""
+    if constitution:
+        constitution_section = f"\n\n【レビュー時の遵守事項（憲法）】\n{constitution[:1500]}"
 
     prompt = f"""あなたはシニアエンジニアです。
 以下のタスクと実装結果をレビューしてください。
@@ -207,11 +362,13 @@ def reviewer_agent(state: TaskState) -> TaskState:
 
 実装結果：
 {result}
+{constitution_section}
 
 以下の基準で評価してください：
 1. タスクの要件を満たしているか
 2. コードに明らかなバグや問題がないか
 3. 基本的な品質基準を満たしているか
+4. 憲法（コーディング規約・セキュリティルール）に違反していないか
 
 最初の行に必ず以下のどちらかだけを記載してください：
 APPROVED（承認）またはREJECTED（却下）
@@ -244,33 +401,22 @@ APPROVED（承認）またはREJECTED（却下）
 def file_agent(state: TaskState) -> TaskState:
     """LLMの出力からコードを抽出してファイルに書き込む"""
     import re
-    import os
     from src.filesystem_mcp import FilesystemMCP
 
     instruction = state["instruction"]
     result      = state.get("result", "")
     fs          = FilesystemMCP()
-    model       = get_model(MODEL_DEFAULT)
-
-    # プロジェクトディレクトリを推定
-    import re as _re
-    dir_pattern = r"/Users/[^/\s]+/projects/([^/\s]+)"
-    dir_match   = _re.search(dir_pattern, instruction)
-    if dir_match:
-        proj_name = dir_match.group(1)
-    else:
-        tilde_match = _re.search(r"~/projects/([^/\s,、。]+)", instruction)
-        proj_name   = tilde_match.group(1) if tilde_match else "myapp"
-    proj_dir = f"/Users/shinsukeimanaka/projects/{proj_name}"
+    model       = get_model(state.get("model_used", MODEL_DEFAULT))
+    project_dir = _resolve_project_dir(state)
 
     prompt = (
         "あなたはファイル操作の専門家です。\n"
         "タスクと実装内容を元に、実際にファイルを作成してください。\n\n"
         f"タスク：{instruction}\n\n"
         f"実装内容：\n{result[:3000]}\n\n"
-        f"プロジェクトディレクトリ：{proj_dir}\n\n"
+        f"プロジェクトディレクトリ：{project_dir}\n\n"
         "必ず以下の形式でファイルを指定してください（この形式以外は使わないこと）：\n"
-        f"FILE: {proj_dir}/ファイル名\n"
+        f"FILE: {project_dir}/ファイル名\n"
         "```python\n"
         "ファイルの内容\n"
         "```\n\n"
@@ -281,7 +427,6 @@ def file_agent(state: TaskState) -> TaskState:
     try:
         response      = model.invoke(prompt)
         output        = response.content
-        import re
         pattern       = r"FILE:\s*([^\n]+)\n```(?:\w+)?\n([\s\S]+?)```"
         matches       = re.findall(pattern, output)
         created_files = []
@@ -294,14 +439,25 @@ def file_agent(state: TaskState) -> TaskState:
             if fs.write_file(file_path, file_content):
                 created_files.append(file_path)
 
+        # テストコード自動生成
+        test_files = []
+        try:
+            from src.test_generator import TestGenerator
+            test_gen = TestGenerator()
+            test_files = test_gen.generate_for_changed_files(created_files, instruction)
+        except Exception:
+            pass
+
         file_result = (
             "以下のファイルを作成しました:\n" + "\n".join(created_files)
             if created_files else "ファイル操作はありませんでした"
         )
+        if test_files:
+            file_result += "\n\nテストファイルを自動生成しました:\n" + "\n".join(test_files)
 
         return {
             **state,
-            "changed_files": created_files,
+            "changed_files": created_files + test_files,
             "result": state.get("result", "") + "\n\n【ファイル操作完了】\n" + file_result,
         }
     except Exception as e:
@@ -309,6 +465,7 @@ def file_agent(state: TaskState) -> TaskState:
             **state,
             "error_message": f"ファイル操作エラー: {str(e)}",
         }
+
 
 # ── ノード⑥ bash実行エージェント ────────────────
 def bash_agent(state: TaskState) -> TaskState:
@@ -319,21 +476,9 @@ def bash_agent(state: TaskState) -> TaskState:
     instruction   = state["instruction"]
     result        = state.get("result", "")
     changed_files = state.get("changed_files", [])
-    model         = get_model(MODEL_DEFAULT)
+    model         = get_model(state.get("model_used", MODEL_DEFAULT))
     runner        = BashRunner()
-
-    # プロジェクトディレクトリを推定
-    project_dir = None
-    for f in changed_files:
-        project_dir = os.path.dirname(f)
-        break
-    if not project_dir:
-        dir_pattern = r"/Users/[^/]+/projects/([^/\s]+)"
-        match = re.search(dir_pattern, instruction + result)
-        if match:
-            project_dir = os.path.expanduser(
-                f"~/projects/{match.group(1)}"
-            )
+    project_dir   = _resolve_project_dir(state)
 
     # 仮想環境のセットアップ
     venv_paths = None
@@ -363,7 +508,7 @@ def bash_agent(state: TaskState) -> TaskState:
         commands = re.findall(pattern, output)
 
         results = []
-        has_command_error = False  # ← 追加：コマンドエラーを追跡するフラグ
+        has_command_error = False
 
         for cmd in commands:
             cmd = cmd.strip()
@@ -373,10 +518,10 @@ def bash_agent(state: TaskState) -> TaskState:
 
             success, stdout, stderr = runner.run(cmd, cwd=project_dir)
             status = "✅" if success else "❌"
-            
+
             if not success:
-                has_command_error = True  # ← 追加：失敗したらフラグを立てる
-                
+                has_command_error = True
+
             output_text = stdout.strip() or stderr.strip()
             results.append(f"{status} {cmd}\n{output_text[:300]}")
 
@@ -396,8 +541,6 @@ def bash_agent(state: TaskState) -> TaskState:
             bash_result += "\n\n【構文チェック】\n" + "\n".join(syntax_results)
 
         has_syntax_error = any("構文エラー" in r for r in syntax_results)
-        
-        # 追加：コマンドエラーか構文エラーのどちらかがあればリトライ
         needs_retry = has_command_error or has_syntax_error
 
         return {
@@ -413,15 +556,15 @@ def bash_agent(state: TaskState) -> TaskState:
             "error_message": f"bash実行エラー: {str(e)}",
         }
 
+
 # ── ノード⑦ Web検索エージェント ────────────────
 def search_agent(state: TaskState) -> TaskState:
     """Web検索を実行してリサーチ結果をstateに追加する"""
     from src.brave_search import BraveSearch
 
     instruction = state["instruction"]
-    model       = get_model(MODEL_DEFAULT)
+    model       = get_model(state.get("model_used", MODEL_DEFAULT))
 
-    # 検索クエリを生成
     query_prompt = (
         "以下のタスクに必要なWeb検索クエリを1〜3個生成してください。\n"
         f"タスク：{instruction}\n\n"
@@ -432,7 +575,7 @@ def search_agent(state: TaskState) -> TaskState:
         response = model.invoke(query_prompt)
         queries  = [q.strip() for q in response.content.strip().splitlines() if q.strip()][:3]
 
-        searcher     = BraveSearch()
+        searcher       = BraveSearch()
         search_results = []
 
         for query in queries:
@@ -442,7 +585,6 @@ def search_agent(state: TaskState) -> TaskState:
 
         combined = "\n\n".join(search_results)
 
-        # 既存のコンテキストに検索結果を追加
         existing = state.get("diff_summary", "")
         new_context = f"{existing}\n\n{combined}" if existing else combined
 
@@ -457,6 +599,7 @@ def search_agent(state: TaskState) -> TaskState:
             "error_message": f"検索エラー: {str(e)}",
         }
 
+
 # ── ノード⑧ ブラウザエージェント ────────────────
 def browser_agent(state: TaskState) -> TaskState:
     """指定されたURLをブラウザで読み込み、コンテンツをコンテキストに追加する"""
@@ -464,8 +607,6 @@ def browser_agent(state: TaskState) -> TaskState:
     from src.browser_client import BrowserClient
 
     instruction = state["instruction"]
-
-    # タスク指示からURLを抽出（http:// または https:// から始まる文字列）
     urls = re.findall(r'https?://[^\s]+', instruction)
 
     if not urls:
@@ -483,7 +624,6 @@ def browser_agent(state: TaskState) -> TaskState:
 
     combined_browser_info = "\n\n".join(browser_results)
 
-    # 既存のコンテキスト（diff_summary）に追記して、coder_agentに渡す
     existing = state.get("diff_summary", "")
     new_context = f"{existing}\n\n{combined_browser_info}" if existing else combined_browser_info
 

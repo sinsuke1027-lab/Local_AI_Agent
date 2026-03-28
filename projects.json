@@ -1,0 +1,30 @@
+{
+  "projects": {
+    "langgraph-orchestrator": {
+      "path": "~/projects/langgraph-orchestrator",
+      "description": "ローカルAIエージェント基盤（LangGraph + Ollama）",
+      "language": "python",
+      "python_version": "3.11",
+      "confidential": false,
+      "model_override": null,
+      "active": true,
+      "tags": ["infra", "ai-agent"]
+    },
+    "langfuse": {
+      "path": "~/projects/langfuse",
+      "description": "Langfuse（Docker）- トレース・コスト可視化",
+      "language": "docker",
+      "confidential": false,
+      "model_override": null,
+      "active": true,
+      "tags": ["infra", "observability"]
+    }
+  },
+  "defaults": {
+    "model": "qwen2.5-coder:14b",
+    "model_debug": "deepseek-r1:14b",
+    "model_confidential": "qwen2.5-coder:14b",
+    "python_version": "3.11",
+    "venv_name": ".venv"
+  }
+}
