@@ -10,6 +10,7 @@ from src.state import TaskState
 from src.task_history_indexer import TaskHistoryIndexer
 from src.complexity_scorer import score_complexity
 from src.debate_agent import run_debate, DebateResult
+from src.prompt_loader import render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -301,25 +302,16 @@ def coder_agent(state: TaskState) -> TaskState:
     debate_feedback = state.get("debate_feedback", "")
     debate_feedback_section = f"\n\n{debate_feedback}" if debate_feedback else ""
 
-    prompt = f"""あなたは優秀なAIソフトウェアエンジニアです。
-以下のタスクを実行してください。
-
-タスク：{instruction}
-{context_section}
-{constitution_section}
-{error_feedback}
-{memory_feedback}
-{success_patterns_section}
-{debate_feedback_section}
-【指示】
-タスクの目的を的確に判断し、以下のルールに従って回答してください。
-1. 「調査」「要約」「説明」のみを求めているタスクの場合：
-   コードは一切記述せず、分かりやすいテキストだけで結果をまとめてください。
-2. 「作成」「実装」「テスト」「スクリプト」などを求めているタスクの場合：
-   実装方針を説明した上で、必ずPythonで実装コードを出力してください。
-   また、pytest等の実行が必要な場合は、必ず「CMD: pytest ファイル名」の形式で記述してください。
-3. Web検索やブラウザ取得結果がある場合は、その情報を最大限活用してください。
-4. 既存コードがある場合はそのスタイルに合わせてください。"""
+    prompt = render_prompt(
+        "coder_agent",
+        instruction=instruction,
+        context_section=context_section,
+        constitution_section=constitution_section,
+        error_feedback=error_feedback,
+        memory_feedback=memory_feedback,
+        success_patterns_section=success_patterns_section,
+        debate_feedback_section=debate_feedback_section,
+    )
 
     try:
         response    = model.invoke(prompt)
@@ -483,25 +475,12 @@ def reviewer_agent(state: TaskState) -> TaskState:
     if constitution:
         constitution_section = f"\n\n【レビュー時の遵守事項（憲法）】\n{constitution[:1500]}"
 
-    prompt = f"""あなたはシニアエンジニアです。
-以下のタスクと実装結果をレビューしてください。
-
-タスク：{instruction}
-
-実装結果：
-{result}
-{constitution_section}
-
-以下の基準で評価してください：
-1. タスクの要件を満たしているか
-2. コードに明らかなバグや問題がないか
-3. 基本的な品質基準を満たしているか
-4. 憲法（コーディング規約・セキュリティルール）に違反していないか
-
-最初の行に必ず以下のどちらかだけを記載してください：
-APPROVED（承認）またはREJECTED（却下）
-
-2行目以降にレビューコメントを記載してください。"""
+    prompt = render_prompt(
+        "reviewer_agent",
+        instruction=instruction,
+        result=result,
+        constitution_section=constitution_section,
+    )
 
     try:
         response       = model.invoke(prompt)
@@ -576,19 +555,11 @@ def file_agent(state: TaskState) -> TaskState:
     model       = get_model(state.get("model_used", MODEL_DEFAULT))
     project_dir = _resolve_project_dir(state)
 
-    prompt = (
-        "あなたはファイル操作の専門家です。\n"
-        "タスクと実装内容を元に、実際にファイルを作成してください。\n\n"
-        f"タスク：{instruction}\n\n"
-        f"実装内容：\n{result[:3000]}\n\n"
-        f"プロジェクトディレクトリ：{project_dir}\n\n"
-        "必ず以下の形式でファイルを指定してください（この形式以外は使わないこと）：\n"
-        f"FILE: {project_dir}/ファイル名\n"
-        "```python\n"
-        "ファイルの内容\n"
-        "```\n\n"
-        "複数ファイルがある場合は繰り返してください。\n"
-        "FILE:の行は必ず絶対パスで記述してください。"
+    prompt = render_prompt(
+        "file_agent",
+        instruction=instruction,
+        result=result[:3000],
+        project_dir=project_dir,
     )
 
     try:
@@ -653,19 +624,11 @@ def bash_agent(state: TaskState) -> TaskState:
         venv_paths = runner.setup_venv(project_dir)
 
     # LLMにコマンド計画を作成させる
-    prompt = (
-        "あなたはbash実行の専門家です。\n"
-        "タスクと実装内容を元に、必要なbashコマンドを指定してください。\n\n"
-        f"タスク：{instruction}\n\n"
-        f"実装内容：\n{result[:2000]}\n\n"
-        f"プロジェクトディレクトリ：{project_dir or '不明'}\n\n"
-        "実行すべきコマンドを以下の形式で指定してください：\n"
-        "CMD: コマンド（pip install・git init・pytest など）\n\n"
-        "注意：\n"
-        "・source activate は不要です（自動で仮想環境を使います）\n"
-        "・python/pipのパスは自動で仮想環境のものに変換されます\n"
-        "・mkdir は不要です（自動で作成されます）\n"
-        "・アプリの起動コマンドは含めないでください"
+    prompt = render_prompt(
+        "bash_agent",
+        instruction=instruction,
+        result=result[:2000],
+        project_dir=project_dir or "不明",
     )
 
     try:
@@ -732,10 +695,9 @@ def search_agent(state: TaskState) -> TaskState:
     instruction = state["instruction"]
     model       = get_model(state.get("model_used", MODEL_DEFAULT))
 
-    query_prompt = (
-        "以下のタスクに必要なWeb検索クエリを1〜3個生成してください。\n"
-        f"タスク：{instruction}\n\n"
-        "検索クエリのみを1行ずつ出力してください。説明は不要です。"
+    query_prompt = render_prompt(
+        "search_agent",
+        instruction=instruction,
     )
 
     try:
