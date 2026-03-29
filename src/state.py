@@ -19,9 +19,16 @@ class TaskState(TypedDict):
 
     # 品質情報
     quality_score:  Optional[float]
+    review_result:  Optional[str]
     test_pass_rate: Optional[float]
     lint_errors:    Optional[int]
     retry_count:    Optional[int]
+
+    # P9: ディベート
+    complexity_score:   Optional[int]
+    debate_result:      Optional[str]
+    debate_triggered:   Optional[bool]
+    debate_feedback:    Optional[str]
 
     # 成果物情報
     changed_files:  Optional[List[str]]

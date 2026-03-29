@@ -87,12 +87,15 @@ async def create_task(req: TaskRequest):
     )
 
     return {
-        "task_id": task_id,
-        "status":  "completed",
-        "result":  result.get("result", ""),
-        "model":   result.get("model_used", ""),
-        "tokens":  result.get("token_count", 0),
-        "cost":    result.get("cost_estimate", 0),
+        "task_id":          task_id,
+        "status":           "completed",
+        "result":           result.get("result", ""),
+        "model":            result.get("model_used", ""),
+        "tokens":           result.get("token_count", 0),
+        "cost":             result.get("cost_estimate", 0),
+        "complexity_score": result.get("complexity_score"),
+        "debate_triggered": result.get("debate_triggered"),
+        "debate_result":    result.get("debate_result"),
     }
 
 

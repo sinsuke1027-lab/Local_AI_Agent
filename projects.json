@@ -27,6 +27,8 @@
     "model_local_fast": "qwen2.5-coder:7b",
     "model_confidential": "qwen2.5-coder:14b",
     "python_version": "3.11",
-    "venv_name": ".venv"
+    "venv_name": ".venv",
+    "debate_threshold": 7,
+    "debate_enabled": true
   }
 }

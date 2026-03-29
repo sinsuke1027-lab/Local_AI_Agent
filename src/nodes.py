@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from src.state import TaskState
 from src.task_history_indexer import TaskHistoryIndexer
+from src.complexity_scorer import score_complexity
+from src.debate_agent import run_debate, DebateResult
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,10 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 MODEL_DEFAULT   = "qwen2.5-coder:14b"
 MODEL_DEBUG     = "deepseek-r1:14b"
 MODEL_FAST      = "gemini-2.5-flash"
-MODEL_LOCAL_FAST = "qwen2.5-coder:7b"
+MODEL_LOCAL_FAST  = "qwen2.5-coder:7b"
+
+# P9: ディベート閾値（projects.jsonのdefaults.debate_thresholdで上書き可能）
+DEBATE_THRESHOLD = 7
 
 
 class GeminiWrapper:
@@ -223,6 +228,14 @@ def task_analyzer(state: TaskState) -> TaskState:
     except Exception as e:
         logger.warning("Failed to search success patterns: %s", e)
 
+    # --- P9: 複雑度スコア算出 ---
+    complexity = 5  # DEFAULT_SCORE
+    try:
+        complexity = score_complexity(state.get("instruction", ""))
+        logger.info("Complexity score: %d", complexity)
+    except Exception as e:
+        logger.warning("Complexity scoring failed: %s", e)
+
     return {
         **state,
         "task_id":              state.get("task_id") or str(uuid.uuid4())[:8],
@@ -232,6 +245,8 @@ def task_analyzer(state: TaskState) -> TaskState:
         "needs_file_operation": needs_file,
         "diff_summary":         full_context,
         "success_patterns":     success_patterns,
+        "complexity_score":     complexity,
+        "debate_triggered":     False,
     }
 
 
@@ -282,6 +297,10 @@ def coder_agent(state: TaskState) -> TaskState:
 {success_patterns}
 """
 
+    # --- P9: ディベートフィードバックをプロンプトに注入 ---
+    debate_feedback = state.get("debate_feedback", "")
+    debate_feedback_section = f"\n\n{debate_feedback}" if debate_feedback else ""
+
     prompt = f"""あなたは優秀なAIソフトウェアエンジニアです。
 以下のタスクを実行してください。
 
@@ -291,6 +310,7 @@ def coder_agent(state: TaskState) -> TaskState:
 {error_feedback}
 {memory_feedback}
 {success_patterns_section}
+{debate_feedback_section}
 【指示】
 タスクの目的を的確に判断し、以下のルールに従って回答してください。
 1. 「調査」「要約」「説明」のみを求めているタスクの場合：
@@ -325,6 +345,26 @@ def coder_agent(state: TaskState) -> TaskState:
 
 
 # ── ノード③ 履歴保存 + 教訓抽出 + 次タスク提案 ──
+def _ensure_debate_columns(conn) -> None:
+    """debate関連カラムが存在しなければ追加する（冪等）。"""
+    cursor = conn.execute("PRAGMA table_info(tasks)")
+    existing = {row[1] for row in cursor.fetchall()}
+
+    stmts = []
+    if "complexity_score" not in existing:
+        stmts.append("ALTER TABLE tasks ADD COLUMN complexity_score INTEGER")
+    if "debate_triggered" not in existing:
+        stmts.append("ALTER TABLE tasks ADD COLUMN debate_triggered BOOLEAN DEFAULT 0")
+    if "debate_result" not in existing:
+        stmts.append("ALTER TABLE tasks ADD COLUMN debate_result TEXT")
+
+    for stmt in stmts:
+        conn.execute(stmt)
+    if stmts:
+        conn.commit()
+        logger.info("Added %d debate columns to tasks table", len(stmts))
+
+
 def save_history(state: TaskState) -> TaskState:
     """タスク履歴をSQLiteに保存し、必要に応じて教訓抽出と次タスク提案を行う"""
     import sqlite3
@@ -335,23 +375,31 @@ def save_history(state: TaskState) -> TaskState:
     conn = sqlite3.connect(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
-            task_id       TEXT PRIMARY KEY,
-            project_id    TEXT,
-            instruction   TEXT,
-            model_used    TEXT,
-            token_count   INTEGER,
-            cost_estimate REAL,
-            result        TEXT,
-            error_message TEXT,
-            started_at    TEXT,
-            completed_at  TEXT,
-            channel_id    TEXT,
-            requester     TEXT
+            task_id          TEXT PRIMARY KEY,
+            project_id       TEXT,
+            instruction      TEXT,
+            model_used       TEXT,
+            token_count      INTEGER,
+            cost_estimate    REAL,
+            result           TEXT,
+            error_message    TEXT,
+            started_at       TEXT,
+            completed_at     TEXT,
+            channel_id       TEXT,
+            requester        TEXT
         )
     """)
+
+    # P9: debate関連カラムのマイグレーション（初回のみ実行、以降はスキップ）
+    _ensure_debate_columns(conn)
+
     completed_at = datetime.now().isoformat()
     conn.execute("""
-        INSERT OR REPLACE INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT OR REPLACE INTO tasks
+            (task_id, project_id, instruction, model_used, token_count, cost_estimate,
+             result, error_message, started_at, completed_at, channel_id, requester,
+             complexity_score, debate_triggered, debate_result)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         state.get("task_id"),
         state.get("project_id"),
@@ -365,6 +413,9 @@ def save_history(state: TaskState) -> TaskState:
         completed_at,
         state.get("channel_id"),
         state.get("requester"),
+        state.get("complexity_score"),
+        1 if state.get("debate_triggered") else 0,
+        state.get("debate_result", ""),
     ))
     conn.commit()
     conn.close()
@@ -474,7 +525,46 @@ APPROVED（承認）またはREJECTED（却下）
         }
 
 
-# ── ノード⑤ ファイル操作エージェント ────────────
+
+# ── ノード⑤ P9: マルチエージェントディベート ──────
+def debate_agent(state: TaskState) -> TaskState:
+    """複雑度が高いタスクのコードを3視点でレビューし、必要なら修正を要求する"""
+    code        = state.get("result", "")
+    instruction = state.get("instruction", "")
+
+    if not code:
+        logger.warning("Debate: no code to review, skipping")
+        return {
+            **state,
+            "debate_triggered": True,
+            "debate_result":    "",
+            "next_node":        "save_history",
+        }
+
+    result = run_debate(code=code, instruction=instruction)
+
+    if result.verdict == "NEEDS_REVISION":
+        # ✅ debate_feedbackに格納（instructionは不変）
+        logger.info("Debate verdict: NEEDS_REVISION — routing to coder_agent retry")
+        return {
+            **state,
+            "debate_triggered": True,
+            "debate_result":    result.summary,
+            "debate_feedback":  result.to_prompt_context(),
+            "next_node":        "retry",
+        }
+    else:
+        logger.info("Debate verdict: APPROVED — routing to save_history")
+        return {
+            **state,
+            "debate_triggered": True,
+            "debate_result":    result.summary,
+            "debate_feedback":  "",
+            "next_node":        "save_history",
+        }
+
+
+# ── ノード⑥ ファイル操作エージェント ────────────
 def file_agent(state: TaskState) -> TaskState:
     """LLMの出力からコードを抽出してファイルに書き込む"""
     import re

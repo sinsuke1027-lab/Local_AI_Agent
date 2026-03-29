@@ -2,8 +2,9 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from src.state import TaskState
 from src.nodes import (
-    task_analyzer, coder_agent, reviewer_agent,
-    file_agent, bash_agent, search_agent, save_history, browser_agent
+    task_analyzer, coder_agent, reviewer_agent, debate_agent,
+    file_agent, bash_agent, search_agent, save_history, browser_agent,
+    DEBATE_THRESHOLD,
 )
 
 MAX_RETRY = 3
@@ -51,8 +52,31 @@ def route_after_review(state: TaskState) -> str:
     next_node   = state.get("next_node", "save_history")
     retry_count = state.get("retry_count", 0)
 
+    # REJECTED → 通常リトライ（ディベート不要）
     if next_node == "retry" and retry_count < MAX_RETRY:
         return "retry"
+
+    # APPROVED かつ複雑度が高い かつ未ディベート → debate_agent
+    complexity       = state.get("complexity_score", 0)
+    already_debated  = state.get("debate_triggered", False)
+    debate_threshold = state.get("debate_threshold", DEBATE_THRESHOLD)
+
+    if complexity >= debate_threshold and not already_debated:
+        return "debate_agent"
+
+    if state.get("needs_file_operation", False):
+        return "file_agent"
+
+    return "save_history"
+
+
+def route_after_debate(state: TaskState) -> str:
+    """ディベート後のルーティング"""
+    next_node   = state.get("next_node", "save_history")
+    retry_count = state.get("retry_count", 0)
+
+    if next_node == "retry" and retry_count < MAX_RETRY:
+        return "increment_retry"
 
     if state.get("needs_file_operation", False):
         return "file_agent"
@@ -84,6 +108,7 @@ def build_graph():
     graph.add_node("browser_agent",   browser_agent)
     graph.add_node("coder_agent",     coder_agent)
     graph.add_node("reviewer_agent",  reviewer_agent)
+    graph.add_node("debate_agent",    debate_agent)
     graph.add_node("increment_retry", increment_retry)
     graph.add_node("file_agent",      file_agent)
     graph.add_node("bash_agent",      bash_agent)
@@ -110,9 +135,20 @@ def build_graph():
         "reviewer_agent",
         route_after_review,
         {
-            "retry":        "increment_retry",
-            "file_agent":   "file_agent",
-            "save_history": "save_history",
+            "retry":         "increment_retry",
+            "debate_agent":  "debate_agent",
+            "file_agent":    "file_agent",
+            "save_history":  "save_history",
+        }
+    )
+
+    graph.add_conditional_edges(
+        "debate_agent",
+        route_after_debate,
+        {
+            "increment_retry": "increment_retry",
+            "file_agent":      "file_agent",
+            "save_history":    "save_history",
         }
     )
 

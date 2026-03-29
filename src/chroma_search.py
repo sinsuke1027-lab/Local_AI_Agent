@@ -16,10 +16,10 @@ class ChromaSearch:
         if self._client is not None:
             return
 
-        import chromadb
         from sentence_transformers import SentenceTransformer
+        from src.chroma_client import get_chroma_client
 
-        self._client     = chromadb.PersistentClient(path=self.chroma_path)
+        self._client     = get_chroma_client()
         self._model      = SentenceTransformer("all-MiniLM-L6-v2")
 
         try:

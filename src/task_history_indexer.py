@@ -18,8 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-import chromadb
-from chromadb.config import Settings
+from src.chroma_client import get_chroma_client
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +42,8 @@ class TaskHistoryIndexer:
         self.db_path = db_path or TASK_HISTORY_DB
         self.chroma_dir = chroma_dir or CHROMA_DB_DIR
 
-        # ChromaDB永続クライアント（既存インスタンスと同居）
-        self.chroma_client = chromadb.PersistentClient(
-            path=str(self.chroma_dir),
-            settings=Settings(anonymized_telemetry=False),
-        )
+        # 共有シングルトンクライアントを使用（衝突防止）
+        self.chroma_client = get_chroma_client(self.chroma_dir)
         self.collection = self.chroma_client.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"description": "Task history for RAG-based success pattern lookup"},
@@ -136,6 +132,10 @@ class TaskHistoryIndexer:
             "token_count": task.get("token_count") or 0,
             "cost_estimate": task.get("cost_estimate") or 0.0,
             "has_error": not is_success,
+            # P9追加
+            "complexity_score": task.get("complexity_score") or 0,
+            "debate_triggered": bool(task.get("debate_triggered", False)),
+            "debate_result": task.get("debate_result") or "",
         }
 
     def _upsert_tasks(self, tasks: list[dict]) -> int:
