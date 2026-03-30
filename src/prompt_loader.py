@@ -123,9 +123,14 @@ def load_prompt(agent_name: str) -> str:
 
 
 def render_prompt(agent_name: str, **kwargs) -> str:
-    """プロンプトを読み込み、変数を埋め込んで返す。"""
+    """プロンプトを読み込み、変数を埋め込んで返す。
+    空セクションによる連続空行（3行以上）を1行に圧縮する。
+    """
+    import re
     template = load_prompt(agent_name)
-    return template.format(**kwargs)
+    rendered = template.format(**kwargs)
+    # 3行以上の連続空行を1行に圧縮（空セクションの積み重なりを防ぐ）
+    return re.sub(r'\n{3,}', '\n\n', rendered)
 
 
 def list_prompts() -> list[str]:
