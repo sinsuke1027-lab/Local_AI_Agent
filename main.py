@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from typing import Optional
 from pydantic import BaseModel
 from src.graph import orchestrator
+from src.auth import APIKeyMiddleware
 from langfuse import Langfuse
 from langfuse.callback import CallbackHandler
 
@@ -20,6 +21,7 @@ langfuse = Langfuse(
 )
 
 app = FastAPI(title="LangGraph Orchestrator")
+app.add_middleware(APIKeyMiddleware)
 
 
 # ── リクエストモデル ────────────────────────────

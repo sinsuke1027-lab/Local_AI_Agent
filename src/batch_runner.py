@@ -55,6 +55,7 @@ class BatchRunner:
                     "project_id": project_name,
                     "requester": "batch_runner",
                 },
+                headers={"X-API-Key": os.getenv("FASTAPI_API_KEY", "")},
                 timeout=600.0,
             )
             if response.status_code == 200:
@@ -268,6 +269,20 @@ class BatchRunner:
         # Discord通知
         if notify_discord:
             self._send_discord_notification(report)
+
+        # --- P10a: 週次バッチ時に改善提案をDiscord通知 ---
+        try:
+            from src.self_improver import SelfImprover
+            improver = SelfImprover()
+            analysis = improver.analyze(days=7)
+            suggestions = improver.generate_suggestions(analysis)
+            if suggestions:
+                improver.notify_suggestions(suggestions)
+                self._log(f"P10a: {len(suggestions)}件の改善提案をDiscordに送信")
+            else:
+                self._log("P10a: 改善提案なし")
+        except Exception as e:
+            self._log(f"P10a notification failed: {e}")
 
         self._log("=== 夜間バッチ完了 ===")
 

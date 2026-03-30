@@ -1,9 +1,12 @@
 import discord
 import httpx
 import asyncio
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ── 設定 ──────────────────────────────────
-import os
 DISCORD_TOKEN  = os.getenv("DISCORD_TOKEN")
 N8N_WEBHOOK    = "http://localhost:5678/webhook/discord-receive"
 # ──────────────────────────────────────────
