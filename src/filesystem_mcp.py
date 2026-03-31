@@ -22,8 +22,13 @@ class FilesystemMCP:
             },
         }
         input_data = json.dumps(request) + "\n"
+        npx = (
+            "/opt/homebrew/bin/npx"
+            if os.path.exists("/opt/homebrew/bin/npx")
+            else "npx"
+        )
         proc = subprocess.run(
-            ["npx", "-y", "@modelcontextprotocol/server-filesystem", self.allowed_dir],
+            [npx, "-y", "@modelcontextprotocol/server-filesystem", self.allowed_dir],
             input=input_data,
             capture_output=True,
             text=True,
