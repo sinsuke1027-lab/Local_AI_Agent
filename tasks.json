@@ -119,6 +119,246 @@
       "depends_on": [],
       "created_at": "2026-03-28 18:45",
       "completed_at": "2026-03-28 23:30"
+    },
+    {
+      "id": "T013",
+      "title": "フィボナッチ数列の最適化",
+      "description": "現在の実装ではループを使用していますが、再帰的実装やメモ化を用いた効率的な方法を考える。特に大規模な n 値に対するパフォーマンス向上に焦点を当てる。",
+      "status": "FAILED",
+      "priority": 8,
+      "depends_on": [],
+      "created_at": "2026-03-29 07:31",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T014",
+      "title": "フィボナッチ数列のバリエーション実装",
+      "description": "フィボナッチ数列のバリエーション（例えば、フィボナッチ・トライアングルやフィボナッチ・キューブ）を実装し、それぞれの特性をテストケースに追加する。",
+      "status": "FAILED",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-29 07:31",
+      "completed_at": "2026-03-30 00:00"
+    },
+    {
+      "id": "T015",
+      "title": "APIエンドポイント作成",
+      "description": "実装したフィボナッチ数列関数をFastAPIやFlaskなどのWebフレームワークを使ってAPIエンドポイントとして公開し、外部からのアクセスを可能にする。",
+      "status": "FAILED",
+      "priority": 9,
+      "depends_on": [],
+      "created_at": "2026-03-29 07:31",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T016",
+      "title": "フィボナッチ数列の単体テスト実装",
+      "description": "fibonacci関数を含むcalc.pyファイルに、フィボナッチ数列生成の単体テストケースを追加し、pytestを使用してテストを実行できるようにする。",
+      "status": "FAILED",
+      "priority": 8,
+      "depends_on": [],
+      "created_at": "2026-03-29 07:35",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T017",
+      "title": "APIエンドポイントの設計とドキュメンテーション",
+      "description": "フィボナッチ数列を返すAPIエンドポイントを作成するために、FastAPIまたはFlaskを使用した基本的なルーティングとレスポンスフォーマットの設計を行います。また、APIの使用方法やリクエスト/レスポンスの詳細をREADME.mdに追記します。",
+      "status": "FAILED",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-29 07:35",
+      "completed_at": "2026-03-30 00:10"
+    },
+    {
+      "id": "T018",
+      "title": "フィボナッチ数列バリエーションのアルゴリズム設計",
+      "description": "フィボナッチ数列のバリエーション（例：フィボナッチ波長、フィボナッチ螺旋）を生成するための新しい関数またはクラスを設計し、calc.pyファイルに実装します。",
+      "status": "FAILED",
+      "priority": 6,
+      "depends_on": [],
+      "created_at": "2026-03-29 07:35",
+      "completed_at": "2026-03-29 23:30"
+    },
+    {
+      "id": "T019",
+      "title": "リストの合計を返す関数のドキュメンテーションの改善",
+      "description": "`sum_list` 関数の docstring を更に詳細にする。また、関数の使い方や注意点を README.md に記載する。",
+      "status": "FAILED",
+      "priority": 5,
+      "depends_on": [],
+      "created_at": "2026-03-29 12:26",
+      "completed_at": "2026-03-29 23:10"
+    },
+    {
+      "id": "T020",
+      "title": "リストの合計を返す関数のエラーハンドリング追加",
+      "description": "`sum_list` 関数で非数値要素が含まれる場合や、不適切な入力の場合に適切なエラー処理を行う。",
+      "status": "FAILED",
+      "priority": 6,
+      "depends_on": [],
+      "created_at": "2026-03-29 12:26",
+      "completed_at": "2026-03-29 23:40"
+    },
+    {
+      "id": "T021",
+      "title": "リストの合計を返す関数のパフォーマンス最適化",
+      "description": "`sum_list` 関数の実装をレビューし、必要に応じてパフォーマンスを向上させる。",
+      "status": "FAILED",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-29 12:26",
+      "completed_at": "2026-03-30 00:17"
+    },
+    {
+      "id": "T022",
+      "title": "リストの合計を返す関数の単体テスト実装",
+      "description": "リストの合計を返す関数に対する単体テストを作成し、正常系と異常系のケースを含めて検証する。",
+      "status": "FAILED",
+      "priority": 8,
+      "depends_on": [],
+      "created_at": "2026-03-29 13:18",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T023",
+      "title": "リスト操作ユーティリティクラスの作成",
+      "description": "複数のリスト操作関数（追加、削除、合計など）をまとめたユーティリティクラスを作成し、モジュール化する。",
+      "status": "FAILED",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-29 13:18",
+      "completed_at": "2026-03-30 23:06"
+    },
+    {
+      "id": "T024",
+      "title": "APIエンドポイントの実装",
+      "description": "設計したフィボナッチ数列のAPIエンドポイントをFastAPIを使って実装し、Swagger UIで確認できるようにする。",
+      "status": "TODO",
+      "priority": 9,
+      "depends_on": [],
+      "created_at": "2026-03-29 13:18",
+      "completed_at": null
+    },
+    {
+      "id": "T025",
+      "title": "Python `print` 関数の詳細ドキュメンテーション作成",
+      "description": "`print` 関数の他の特徴やユースケース、可能なエラーや例外処理を含む詳細なドキュメンテーションを作成します。",
+      "status": "FAILED",
+      "priority": 8,
+      "depends_on": [],
+      "created_at": "2026-03-29 14:07",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T026",
+      "title": "`print` 関数を使用したデバッグツールの実装",
+      "description": "`print` 関数を用いてデバッグ情報を出力するためのユーティリティ関数やクラスを作成します。",
+      "status": "FAILED",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-29 14:07",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T027",
+      "title": "Python ロギング機能との連携実装",
+      "description": "`print` 関数と Python のロギングモジュールを連携させ、ログレベルや出力先を制御するためのスクリプトを作成します。",
+      "status": "FAILED",
+      "priority": 6,
+      "depends_on": [],
+      "created_at": "2026-03-29 14:07",
+      "completed_at": "2026-03-29 23:49"
+    },
+    {
+      "id": "T028",
+      "title": "APIエンドポイントの設計とドキュメンテーション",
+      "description": "フィボナッチ数列に関連するAPIエンドポイントを設計し、詳細なドキュメントを作成します。このタスクは、後続の実装とテストに必要な基盤となります。",
+      "status": "FAILED",
+      "priority": 8,
+      "depends_on": [],
+      "created_at": "2026-03-29 16:15",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T029",
+      "title": "Python `print` 関数の詳細ドキュメンテーション作成",
+      "description": "既存の`print`関数に関するドキュメントを拡張し、より具体的なユースケースや例を追加します。これは他の開発者にとって有用なリファレンスとなるでしょう。",
+      "status": "FAILED",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-29 16:15",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T030",
+      "title": "`print` 関数を使用したデバッグツールの実装",
+      "description": "フィボナッチ数列や他の関連機能のデバッグを容易にするために、`print`関数を使用したデバッグツールを実装します。これにより、開発プロセスがよりスムーズになります。",
+      "status": "FAILED",
+      "priority": 6,
+      "depends_on": [],
+      "created_at": "2026-03-29 16:15",
+      "completed_at": "2026-03-29 23:52"
+    },
+    {
+      "id": "T031",
+      "title": "WebSocket通信のセキュリティ強化",
+      "description": "WebSocket通信において、より強力な認証と認可メカニズムを導入し、セッション固定攻撃やMITM攻撃から守るための暗号化プロトコルの使用を検討する。また、接続管理クラス内で例外処理を改善して、より安定した通信環境を確保する。",
+      "status": "FAILED",
+      "priority": 7,
+      "depends_on": [],
+      "created_at": "2026-03-29 16:38",
+      "completed_at": "2026-03-30 23:08"
+    },
+    {
+      "id": "T032",
+      "title": "リアルタイム通知システムのパフォーマンス最適化",
+      "description": "大量の同時接続時のパフォーマンスを向上させるため、非同期タスクキューを使用してメッセージ処理を効率化する。さらに、負荷テストを行い、結果に基づいて必要なインフラストラクチャのスケーリング戦略を開発する。",
+      "status": "FAILED",
+      "priority": 5,
+      "depends_on": [],
+      "created_at": "2026-03-29 16:38",
+      "completed_at": "2026-03-29 23:20"
+    },
+    {
+      "id": "T033",
+      "title": "エラー処理とリトライメカニズムの実装",
+      "description": "WebSocket接続やメッセージ送信において、エラーが発生した場合のリトライロジックを導入する。また、重要なシステムエラーメッセージをログに記録し、モニタリングツールと連携して問題の早期検出と対応を行う。",
+      "status": "FAILED",
+      "priority": 6,
+      "depends_on": [],
+      "created_at": "2026-03-29 16:38",
+      "completed_at": "2026-03-29 23:56"
+    },
+    {
+      "id": "T034",
+      "title": "APIエンドポイントのテスト",
+      "description": "新しく作成したAPIエンドポイントをpytestを使ってテストするためのスクリプトを作成し、実行する。",
+      "status": "TODO",
+      "priority": 1,
+      "depends_on": [],
+      "created_at": "2026-03-31 09:24",
+      "completed_at": null
+    },
+    {
+      "id": "T035",
+      "title": "README.mdの更新",
+      "description": "プロジェクトの新しい状況や追加されたファイル、ディレクトリ構造をREADME.mdに反映させる。",
+      "status": "TODO",
+      "priority": 2,
+      "depends_on": [],
+      "created_at": "2026-03-31 09:24",
+      "completed_at": null
+    },
+    {
+      "id": "T036",
+      "title": "pytestのCI/CD設定",
+      "description": "pytestを使用したテストが自動的に実行されるようにGitHub ActionsなどのCI/CDパイプラインを設定する。",
+      "status": "TODO",
+      "priority": 3,
+      "depends_on": [],
+      "created_at": "2026-03-31 09:24",
+      "completed_at": null
     }
   ]
 }

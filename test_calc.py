@@ -1,33 +1,23 @@
 import pytest
-from src.calc import Calculator
+from calc import sum_list_bonus
 
-def test_add():
-    calc = Calculator()
-    assert calc.add(1, 2) == 3
-    assert calc.add(-1, -1) == -2
-    assert calc.add(-1, 1) == 0
-    assert calc.add(0, 0) == 0
+class TestCalc:
+    def test_sum_list_bonus_normal_case(self):
+        assert sum_list_bonus([1, 2, -3, 4]) == 7
+        assert sum_list_bonus([-1, -2, -3]) == 0
+        assert sum_list_bonus([]) == 0
+        assert sum_list_bonus([0, 0, 0]) == 0
 
-def test_subtract():
-    calc = Calculator()
-    assert calc.subtract(10, 5) == 5
-    assert calc.subtract(-10, -5) == -5
-    assert calc.subtract(-10, 5) == -15
-    assert calc.subtract(10, -5) == 15
+    def test_sum_list_bonus_with_negative_numbers(self):
+        assert sum_list_bonus([1, -2, 3, -4, 5]) == 9
 
-def test_multiply():
-    calc = Calculator()
-    assert calc.multiply(2, 3) == 6
-    assert calc.multiply(-2, -3) == 6
-    assert calc.multiply(-2, 3) == -6
-    assert calc.multiply(0, 0) == 0
+    def test_sum_list_bonus_with_all_positive_numbers(self):
+        assert sum_list_bonus([1, 2, 3, 4, 5]) == 15
 
-def test_divide():
-    calc = Calculator()
-    assert calc.divide(10, 2) == 5
-    assert calc.divide(-10, -2) == 5
-    assert calc.divide(-10, 2) == -5
-    assert calc.divide(10, -2) == -5
+    def test_sum_list_bonus_with_mixed_types(self):
+        with pytest.raises(TypeError):
+            sum_list_bonus([1, 'a', 3])
 
-    with pytest.raises(ValueError):
-        calc.divide(10, 0)
+    def test_sum_list_bonus_with_non_integer_elements(self):
+        with pytest.raises(TypeError):
+            sum_list_bonus([1.0, 2, 3])

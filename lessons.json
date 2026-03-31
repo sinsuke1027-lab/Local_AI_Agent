@@ -7,7 +7,12 @@
       "error_pattern": "Python 3.14でlangfuseやlangchainがインストールできない",
       "root_cause": "langfuse 2.x、langchain 0.2.xはPython 3.14に未対応",
       "solution": "Python 3.11を使用する（pyenvで管理）",
-      "tags": ["python", "langfuse", "langchain", "互換性"],
+      "tags": [
+        "python",
+        "langfuse",
+        "langchain",
+        "互換性"
+      ],
       "severity": "critical"
     },
     {
@@ -17,8 +22,55 @@
       "error_pattern": "GitHub push時にBot TokenがブロックされてpushできないGitHub push protection",
       "root_cause": "Discord Bot Tokenがソースコードにハードコードされていた",
       "solution": "トークンは.envに移動し、os.getenv()で読み込む。.envは.gitignoreに追加",
-      "tags": ["github", "security", "discord", "env"],
+      "tags": [
+        "github",
+        "security",
+        "discord",
+        "env"
+      ],
       "severity": "critical"
+    },
+    {
+      "id": "L003",
+      "created_at": "2026-03-31",
+      "project": "langgraph-orchestrator",
+      "error_pattern": "ファイル操作エラー: [Errno 2] No such file or directory: 'npx'",
+      "root_cause": "`max_value.py`や`test_max_value.py`の生成がうまくいかなかったため、指定したファイルが存在しなかった。",
+      "solution": "手動で必要なファイルを作成し、関数とテストケースを適切に実装する。また、自動生成スクリプトの確認と修正を行う。",
+      "tags": [
+        "ファイル操作",
+        "自動生成",
+        "pytest"
+      ],
+      "severity": "critical"
+    },
+    {
+      "id": "L004",
+      "created_at": "2026-03-31",
+      "project": "langgraph-orchestrator",
+      "error_pattern": "ファイル操作エラー: [Errno 2] No such file or directory: 'npx'",
+      "root_cause": "コードで参照されている 'npx' ファイルやディレクトリが存在しない。",
+      "solution": "'npx' ファイルまたはディレクトリの正しいパスを指定する。または、必要ない場合はその参照部分を取り除く。",
+      "tags": [
+        "ファイル操作",
+        "ディレクトリエラー",
+        "パス指定"
+      ],
+      "severity": "normal"
+    },
+    {
+      "id": "L005",
+      "created_at": "2026-03-31",
+      "project": "langgraph-orchestrator",
+      "error_pattern": "ファイル操作エラー: [Errno 2] No such file or directory: 'npx'",
+      "root_cause": "指定されたディレクトリが存在しないか、アクセス権限がない",
+      "solution": "指定のディレクトリが存在することを確認し、必要であればアクセス権限を設定する",
+      "tags": [
+        "ファイル操作",
+        "ディレクトリ",
+        "アクセス権限"
+      ],
+      "severity": "normal"
     }
   ]
 }

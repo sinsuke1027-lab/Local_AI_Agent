@@ -225,6 +225,16 @@ class ReportGenerator:
             except Exception:
                 pass
 
+        # --- P10a: 自己改善分析セクション追加 ---
+        try:
+            from src.self_improver import SelfImprover
+            improver = SelfImprover()
+            analysis_text = improver.run(days=7)
+            lines.extend(["", "---", "", analysis_text])
+        except Exception as e:
+            logger.warning("P10a analysis failed: %s", e)
+            lines.extend(["", "---", "", "（自己改善分析の生成に失敗しました）"])
+
         return "\n".join(lines)
 
     def save_report(self, content: str, filename: str) -> str:
