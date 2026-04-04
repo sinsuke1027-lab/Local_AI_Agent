@@ -3,6 +3,7 @@ import os
 import asyncio
 import json
 import logging
+import concurrent.futures
 from datetime import datetime
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
@@ -128,7 +129,17 @@ def _load_constitution(project_dir: str) -> str:
     return ""
 
 
-def _get_model_for_project(project_dir: str, is_debug: bool = False) -> str:
+def _get_model_by_complexity(score: int) -> str:
+    """複雑度スコアに基づいてモデルを選択する（M6-1）"""
+    if score <= 3:
+        return "qwen2.5-coder:7b"
+    elif score <= 6:
+        return "qwen2.5-coder:14b"
+    else:
+        return "gemini-2.5-flash"
+
+
+def _get_model_for_project(project_dir: str, is_debug: bool = False, complexity_score: int = 5) -> str:
     """projects.jsonからプロジェクトに適したモデルを決定する"""
     projects_path = os.path.expanduser(
         "~/projects/langgraph-orchestrator/projects.json"
@@ -154,7 +165,12 @@ def _get_model_for_project(project_dir: str, is_debug: bool = False) -> str:
         except Exception:
             pass
 
-    return MODEL_DEBUG if is_debug else MODEL_DEFAULT
+    # デバッグタスクは deepseek-r1:14b
+    if is_debug:
+        return MODEL_DEBUG
+
+    # 複雑度スコアに基づく自動選択
+    return _get_model_by_complexity(complexity_score)
 
 
 # ── ノード① タスク分析 ───────────────────────
@@ -163,13 +179,27 @@ def task_analyzer(state: TaskState) -> TaskState:
     instruction = state["instruction"].lower()
     project_dir = _resolve_project_dir(state)
 
-    # 複雑度スコアリング
+    # デバッグタスク判定
     is_debug = any(w in instruction for w in [
         "バグ", "エラー", "デバッグ", "bug", "error", "fix"
     ])
 
-    # プロジェクト設定に基づくモデル選択
-    model = _get_model_for_project(project_dir, is_debug)
+    # M6-4: 相談・要件定義モード判定
+    is_consultation = any(w in instruction for w in [
+        "相談", "アイデア", "どうすれば", "要件", "検討", "設計", "メリット", "デメリット",
+    ])
+
+    # --- M6-1: 複雑度スコアを先に算出してからモデルを決定 ---
+    complexity = 5  # DEFAULT_SCORE
+    try:
+        complexity = score_complexity(state.get("instruction", ""))
+        logger.info("Complexity score: %d", complexity)
+    except Exception as e:
+        logger.warning("Complexity scoring failed: %s", e)
+
+    # プロジェクト設定 + 複雑度スコアに基づくモデル選択
+    model = _get_model_for_project(project_dir, is_debug, complexity_score=complexity)
+    logger.info("Model selected: %s (complexity=%d, is_debug=%s)", model, complexity, is_debug)
 
     # ファイル操作が必要かどうかを判定
     needs_file = any(w in instruction for w in [
@@ -229,14 +259,6 @@ def task_analyzer(state: TaskState) -> TaskState:
     except Exception as e:
         logger.warning("Failed to search success patterns: %s", e)
 
-    # --- P9: 複雑度スコア算出 ---
-    complexity = 5  # DEFAULT_SCORE
-    try:
-        complexity = score_complexity(state.get("instruction", ""))
-        logger.info("Complexity score: %d", complexity)
-    except Exception as e:
-        logger.warning("Complexity scoring failed: %s", e)
-
     return {
         **state,
         "task_id":              state.get("task_id") or str(uuid.uuid4())[:8],
@@ -248,6 +270,7 @@ def task_analyzer(state: TaskState) -> TaskState:
         "success_patterns":     success_patterns,
         "complexity_score":     complexity,
         "debate_triggered":     False,
+        "is_consultation":      is_consultation,
     }
 
 
@@ -688,6 +711,50 @@ def bash_agent(state: TaskState) -> TaskState:
 
 
 # ── ノード⑦ Web検索エージェント ────────────────
+def consultant_agent(state: TaskState) -> TaskState:
+    """相談・要件定義モード：リサーチ結果を元にPM/コンサルタントとして提案をまとめる"""
+    instruction = state["instruction"]
+    model       = get_model(state.get("model_used", MODEL_DEFAULT))
+    project_dir = _resolve_project_dir(state)
+
+    constitution_text = _load_constitution(project_dir)
+    constitution_section = (
+        f"## 📜 プロジェクト憲法\n{constitution_text}" if constitution_text else ""
+    )
+
+    context = state.get("diff_summary", "") or ""
+
+    prompt = render_prompt(
+        "consultant_agent",
+        instruction=instruction,
+        context=context[:4000],
+        constitution_section=constitution_section,
+    )
+
+    try:
+        response = model.invoke(prompt)
+        result_text = response.content if hasattr(response, "content") else str(response)
+
+        token_count = 0
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            token_count = getattr(response.usage_metadata, "total_token_count", 0) or 0
+
+        logger.info("[consultant_agent] Done. tokens=%d", token_count)
+
+        return {
+            **state,
+            "result":      result_text,
+            "token_count": (state.get("token_count") or 0) + token_count,
+        }
+
+    except Exception as e:
+        logger.error("[consultant_agent] Error: %s", e)
+        return {
+            **state,
+            "error_message": f"コンサルタントエージェント エラー: {str(e)}",
+        }
+
+
 def search_agent(state: TaskState) -> TaskState:
     """Web検索を実行してリサーチ結果をstateに追加する"""
     from src.brave_search import BraveSearch
@@ -704,15 +771,16 @@ def search_agent(state: TaskState) -> TaskState:
         response = model.invoke(query_prompt)
         queries  = [q.strip() for q in response.content.strip().splitlines() if q.strip()][:3]
 
-        searcher       = BraveSearch()
-        search_results = []
+        searcher = BraveSearch()
 
-        for query in queries:
-            result = searcher.search_summary(query, count=3)
-            if result:
-                search_results.append(result)
+        def _do_search(query: str) -> str:
+            return searcher.search_summary(query, count=3) or ""
 
-        combined = "\n\n".join(search_results)
+        # 複数クエリを並列実行
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries) or 1) as executor:
+            results = list(executor.map(_do_search, queries))
+
+        combined = "\n\n".join(r for r in results if r)
 
         existing = state.get("diff_summary", "")
         new_context = f"{existing}\n\n{combined}" if existing else combined
@@ -742,14 +810,17 @@ def browser_agent(state: TaskState) -> TaskState:
         return state
 
     client = BrowserClient()
-    browser_results = []
 
-    for url in urls:
+    def _fetch_url(url: str) -> str:
         try:
             content = client.get_page_content(url)
-            browser_results.append(f"【ブラウザ取得結果: {url}】\n{content}")
+            return f"【ブラウザ取得結果: {url}】\n{content}"
         except Exception as e:
-            browser_results.append(f"【ブラウザ取得エラー: {url}】\n{str(e)}")
+            return f"【ブラウザ取得エラー: {url}】\n{str(e)}"
+
+    # 複数URLを並列取得
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(urls), 4)) as executor:
+        browser_results = list(executor.map(_fetch_url, urls))
 
     combined_browser_info = "\n\n".join(browser_results)
 
@@ -760,3 +831,95 @@ def browser_agent(state: TaskState) -> TaskState:
         **state,
         "diff_summary": new_context,
     }
+
+
+# ── ノード⑨ HITL: 設計確認チェックポイント ─────────────
+def design_checkpoint(state: TaskState) -> TaskState:
+    """task_analyzer完了後、コーディング開始前にユーザー確認を挟む"""
+    if not state.get("require_approval"):
+        return state  # 承認モードOFFならスキップ
+
+    from src.human_approval import create_pending, poll_for_approval
+
+    task_id    = state.get("task_id", "unknown")
+    model      = state.get("model_used", "")
+    complexity = state.get("complexity_score", "未計算")
+
+    if state.get("is_consultation") and state.get("result"):
+        # 相談モード: コンサルタントの提案内容をそのまま表示
+        preview = (
+            f"## 💼 コンサルタント提案内容\n\n"
+            f"**タスク**: {state.get('instruction', '')}\n\n"
+            f"---\n\n"
+            f"{state['result']}"
+        )
+    else:
+        preview = (
+            f"## 🔍 設計確認\n\n"
+            f"**タスク**: {state.get('instruction', '')}\n\n"
+            f"**使用モデル**: {model}\n"
+            f"**複雑度スコア**: {complexity}\n\n"
+            f"**コンテキスト（抜粋）**:\n{(state.get('diff_summary') or '')[:800]}"
+        )
+
+    create_pending(task_id, "design", preview)
+    logger.info("[HITL] Waiting for design approval: task_id=%s", task_id)
+
+    result = poll_for_approval(task_id, "design")
+
+    if result["status"] == "rejected":
+        feedback = result["feedback"]
+        logger.info("[HITL] Design rejected with feedback: %s", feedback)
+        new_instruction = (
+            state.get("instruction", "") +
+            f"\n\n【ユーザーからの修正指示】\n{feedback}"
+        )
+        return {
+            **state,
+            "instruction":    new_instruction,
+            "human_feedback": feedback,
+            "next_node":      "retry",
+        }
+
+    logger.info("[HITL] Design approved: task_id=%s", task_id)
+    return {**state, "human_feedback": ""}
+
+
+# ── ノード⑩ HITL: ファイル保存前チェックポイント ──────
+def prefile_checkpoint(state: TaskState) -> TaskState:
+    """reviewer_agent承認後、ファイル書き込み前にユーザー確認を挟む"""
+    if not state.get("require_approval"):
+        return state  # 承認モードOFFならスキップ
+
+    from src.human_approval import create_pending, poll_for_approval
+
+    task_id = state.get("task_id", "unknown")
+    result  = state.get("result", "")
+
+    preview = (
+        f"## 💾 ファイル保存前確認\n\n"
+        f"**タスク**: {state.get('instruction', '')}\n\n"
+        f"**生成コード（抜粋）**:\n\n{result[:3000]}"
+    )
+
+    create_pending(task_id, "pre_file", preview)
+    logger.info("[HITL] Waiting for pre-file approval: task_id=%s", task_id)
+
+    approval = poll_for_approval(task_id, "pre_file")
+
+    if approval["status"] == "rejected":
+        feedback = approval["feedback"]
+        logger.info("[HITL] Pre-file rejected with feedback: %s", feedback)
+        new_instruction = (
+            state.get("instruction", "") +
+            f"\n\n【ユーザーからの修正指示（ファイル保存前）】\n{feedback}"
+        )
+        return {
+            **state,
+            "instruction":    new_instruction,
+            "human_feedback": feedback,
+            "next_node":      "retry",
+        }
+
+    logger.info("[HITL] Pre-file approved: task_id=%s", task_id)
+    return {**state, "human_feedback": ""}

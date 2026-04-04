@@ -1,6 +1,6 @@
 # LangGraph Orchestrator — 開発ロードマップ
 
-**最終更新: 2026-03-31**
+**最終更新: 2026-04-04 (M7-2完)**
 
 ---
 
@@ -57,28 +57,36 @@
 - [x] launchd 常時起動（com.langgraph.streamlit、0.0.0.0:8501）
 - [x] filesystem_mcp.py の npx フルパス対応（launchd環境で /opt/homebrew/bin/npx が未検索）
 
+### M5-2 Phase 2: Streamlit 機能拡張 & HITL
+- [x] **Phase 2-A: レポート閲覧ページ**
+  - [x] reports/ ディレクトリのMarkdownファイル一覧表示・閲覧（st.markdown）
+- [x] **Phase 2-B: プロンプト編集UI**
+  - [x] prompts/*.md の表示・編集・保存・リセット機能
+  - [x] 編集前後の差分表示（difflib）
+- [x] **HITL (Human-in-the-loop) 承認モード**
+  - [x] 2段階承認フロー（①設計確認 ②ファイル保存前確認）の実装
+  - [x] SQLite `pending_approvals` テーブルによる非同期承認待ち管理
+  - [x] Streamlit「🔔 承認待ち」ページ追加
+
+### M5-2 Phase 3: プロジェクト管理の効率化
+- [x] **プロジェクト自動取得 & 選択UI**
+  - [x] `~/projects/` およびタスク履歴DBからのプロジェクト名自動抽出
+  - [x] Streamlit 上でのプルダウン選択（プロジェクト切り替え）機能
+  - [x] 「(新規作成)」モードによる動的なプロジェクト追加対応
+
+
+### M7-1: FastAPI 非同期化
+- [x] `asyncio.to_thread()` によるバックグラウンドタスク実行の実装
+- [x] タスク投入時の即時レスポンス（Task ID返却）と非同期処理の分離
+
+
 **アクセス先**: http://localhost:8501 / http://192.168.1.10:8501 / http://(Tailscale IP):8501
 
 ---
 
 ## 🔧 残タスク（優先度順）
 
-### 🟠 M5-2 Phase 2: Streamlit 機能拡張
 
-#### Phase 2-A: レポート閲覧ページ
-- [ ] streamlit_app.py に「📈 レポート」ページ追加
-- [ ] reports/ ディレクトリのMarkdownファイル一覧表示
-- [ ] 日次/週次/バッチレポートの内容閲覧（st.markdown）
-- [ ] P10a 自己改善提案の表示
-
-#### Phase 2-B: プロンプト編集UI
-- [ ] streamlit_app.py に「⚙️ プロンプト」ページ追加
-- [ ] prompts/*.md のブラウザ上での表示・編集（st.text_area）
-- [ ] 保存ボタン → ファイル書き込み
-- [ ] リセットボタン → `reset_prompt(agent_name)` 呼び出し
-- [ ] 編集前後の差分表示（difflib使用）
-
-**実装ファイル**: `streamlit_app.py`（ページ追加のみ）
 
 ---
 
@@ -96,13 +104,13 @@
 ### 🟡 M6: 品質・コスト最適化
 
 #### M6-1: モデル自動選択
-- [ ] complexity_score に基づくモデル自動切替ロジック整備
+- [x] complexity_score に基づくモデル自動切替ロジック整備
   - score ≤ 3: qwen2.5-coder:7b
   - score 4〜6: qwen2.5-coder:14b
-  - score ≥ 7: deepseek-r1:14b または gemini-2.5-flash
-- [ ] projects.json の model_override との組み合わせルール
+  - score ≥ 7: gemini-2.5-flash
+- [x] projects.json の model_override との組み合わせルール（優先順: model_override > confidential > is_debug > complexity）
 
-**実装ファイル**: `src/nodes.py`（task_analyzer ノード）
+**実装ファイル**: `src/nodes.py`（`_get_model_by_complexity()` 追加、`task_analyzer` 順序修正）
 
 #### M6-2: コスト追跡の精緻化
 - [ ] Gemini API コストの正確な記録（現在 token_count * 0.000002 でOllama想定計算）
@@ -113,21 +121,28 @@
 - [ ] よく使うタスクパターンのテンプレート化（templates/*.md）
 - [ ] Streamlit UI からテンプレート選択 → タスク投入
 
+#### M6-4: プロダクト・コンサルタント (相談モード)
+- [x] **企画・要件定義エージェントの実装**
+  - [x] `prompts/consultant_agent.md` の作成（PM/建築家ロール）
+  - [x] `task_analyzer` による相談内容の自動検知ロジック
+  - [x] `consultant_agent` ノードによるリサーチ&要件定義提案
+  - [x] 相談結果を `docs/plans/` へ自動保存する仕組み
+
+
+
 ---
 
 ### 🟡 M7: スケールアップ
 
-#### M7-1: FastAPI 非同期化
-- [ ] `orchestrator.invoke()` の同期処理ブロック問題解消
-  - タスク処理中に他のリクエスト（/health 含む）がブロックされる
-  - 対応案: `asyncio.to_thread()` でスレッド実行、またはワーカーキュー化
-- [ ] タスクIDを即時返却し、/status/{task_id} でポーリングするAPI設計
 
-**実装ファイル**: `main.py`、`streamlit_app.py`（ポーリング対応）
 
-#### M7-2: LangGraph 並列実行
-- [ ] 複数タスクの同時処理（LangGraph の並列ノード活用）
-- [ ] タスクキューの管理（SQLite または Redis）
+#### M7-2: LangGraph 並列実行 & タスクキュー
+- [x] **複数タスクの同時処理（asyncio.Queue + Worker方式）**
+  - [x] `MAX_CONCURRENT_TASKS=2` によるリソース保護と並列実行の両立
+- [x] **エージェント内部の並列化**
+  - [x] `debate_agent` の3視点レビューを `ThreadPoolExecutor` で並列化し高速化
+- [x] **待ち行列の可視化**
+  - [x] Streamlit 上でのキュー状態（待ち数・実行中タスク）の表示
 
 #### M7-3: GitHub 連携強化
 - [ ] PR 自動作成（gh CLI or PyGithub）
@@ -160,11 +175,11 @@
 |---------|------|------|------|
 | M1〜M4 + P7〜P10b | 全完了 | 0 | ✅ |
 | M5-1 リモートアクセス | 全完了 | 0 | ✅ |
-| M5-2 Phase 1 Streamlit基本 | 全完了 | 0 | ✅ |
-| M5-2 Phase 2 Streamlit拡張 | 0 | 2 | 🔧 次フェーズ |
+| M5-2 Streamlit機能拡張 | 全完了 | 0 | ✅ |
+| HITL 承認モード | 全完了 | 0 | ✅ |
 | M5-3 Claude Vision | 0 | 5 | 🔧 次フェーズ |
-| M6 品質・コスト最適化 | 0 | 6 | 🟡 中優先 |
-| M7 スケールアップ | 0 | 8 | 🟡 中優先 |
+| M6 品質・コスト最適化 | 2 | 4 | ✅ / 🟡 |
+| M7 スケールアップ (並列化・行列対応済) | 2 | 6 | ✅ / 🟡 |
 | P9残課題 | 0 | 3 | 🔵 低優先 |
 | その他技術課題 | 0 | 3 | 🔵 低優先 |
 

@@ -1,6 +1,8 @@
 """debate_agent.py - P9: マルチエージェントディベート"""
 
 import logging
+import time
+import concurrent.futures
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -149,7 +151,7 @@ def run_debate(
     instruction: str,
     model: Optional[str] = None,
 ) -> DebateResult:
-    """3視点ディベートを実行する。
+    """3視点ディベートを並列実行する（M7-2: ThreadPoolExecutor使用）。
 
     Args:
         code: レビュー対象のコード
@@ -161,24 +163,45 @@ def run_debate(
     model = model or MODEL_DEBUG
     llm = _get_llm(model)
 
-    feedbacks: dict[str, str] = {}
-
-    # --- 3視点を順次実行 ---
-    for perspective, config in PERSPECTIVES.items():
+    def _invoke_perspective(perspective: str) -> tuple[str, str]:
+        """1視点のレビューを実行してフィードバックを返す"""
+        config = PERSPECTIVES[perspective]
         prompt = config["prompt"].format(instruction=instruction, code=code)
+        t0 = time.monotonic()
         try:
-            logger.info(
-                "Debate: running %s perspective with %s...", perspective, model
-            )
+            logger.info("Debate[parallel]: starting %s perspective...", perspective)
             response = llm.invoke(prompt)
-            feedbacks[perspective] = response.content.strip()
+            text = response.content.strip()
+            elapsed = time.monotonic() - t0
             logger.info(
-                "Debate: %s perspective done (%d chars)",
-                perspective, len(feedbacks[perspective]),
+                "Debate[parallel]: %s done in %.1fs (%d chars)",
+                perspective, elapsed, len(text),
             )
+            return perspective, text
         except Exception as e:
-            logger.warning("Debate: %s perspective failed: %s", perspective, e)
-            feedbacks[perspective] = f"（{config['role']}のレビューに失敗: {e}）"
+            logger.warning("Debate[parallel]: %s failed: %s", perspective, e)
+            return perspective, f"（{config['role']}のレビューに失敗: {e}）"
+
+    # --- 3視点を並列実行 ---
+    feedbacks: dict[str, str] = {}
+    t_start = time.monotonic()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(_invoke_perspective, p): p for p in PERSPECTIVES}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                perspective, text = future.result()
+                feedbacks[perspective] = text
+            except Exception as e:
+                perspective = futures[future]
+                logger.warning("Debate[parallel]: future error for %s: %s", perspective, e)
+                feedbacks[perspective] = f"（取得失敗: {e}）"
+
+    elapsed_total = time.monotonic() - t_start
+    logger.info(
+        "Debate[parallel]: all 3 perspectives completed in %.1fs (sequential would be ~3x longer)",
+        elapsed_total,
+    )
 
     # --- 統合判定 ---
     integration_prompt = INTEGRATION_PROMPT.format(
@@ -210,5 +233,5 @@ def run_debate(
         model_used=model,
     )
 
-    logger.info("Debate complete: verdict=%s", verdict)
+    logger.info("Debate complete: verdict=%s (total=%.1fs)", verdict, elapsed_total)
     return result

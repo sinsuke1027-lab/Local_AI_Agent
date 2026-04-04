@@ -48,3 +48,11 @@ class TaskState(TypedDict):
 
     # P8: タスク履歴RAG
     success_patterns: Optional[str]
+
+    # HITL: ヒューマン・イン・ザ・ループ
+    require_approval: Optional[bool]   # 承認モードON/OFF
+    approval_stage:   Optional[str]    # "design" | "pre_file" | None
+    human_feedback:   Optional[str]    # ユーザーからの修正指示
+
+    # M6-4: コンサルタントモード
+    is_consultation:  Optional[bool]   # 相談・要件定義モードON/OFF

@@ -24,6 +24,34 @@ if not API_KEY:
                 break
 
 
+PROJECTS_DIR = Path.home() / "projects"
+
+
+def get_project_list() -> list[str]:
+    """~/projects/ のディレクトリ一覧 + task_history.db の project_id を結合して返す"""
+    names: set[str] = set()
+
+    # 1. ~/projects/ 内のディレクトリ（隠しフォルダ除外）
+    if PROJECTS_DIR.exists():
+        for p in PROJECTS_DIR.iterdir():
+            if p.is_dir() and not p.name.startswith("."):
+                names.add(p.name)
+
+    # 2. task_history.db からユニークな project_id
+    try:
+        conn = sqlite3.connect(str(TASK_HISTORY_DB))
+        rows = conn.execute(
+            "SELECT DISTINCT project_id FROM tasks WHERE project_id IS NOT NULL AND project_id != ''"
+        ).fetchall()
+        conn.close()
+        for (pid,) in rows:
+            names.add(pid)
+    except Exception:
+        pass
+
+    return sorted(names)
+
+
 def get_headers() -> dict:
     headers = {"Content-Type": "application/json"}
     if API_KEY:
@@ -51,7 +79,7 @@ st.title("🤖 LangGraph Orchestrator")
 # ── サイドバー ──────────────────────────────────────────────
 page = st.sidebar.radio(
     "ページ",
-    ["📊 ステータス", "📝 タスク投入", "📋 タスク履歴"],
+    ["📊 ステータス", "📝 タスク投入", "📋 タスク履歴", "🔔 承認待ち", "📈 レポート", "⚙️ プロンプト"],
 )
 
 st.sidebar.markdown("---")
@@ -106,6 +134,23 @@ if page == "📊 ステータス":
     except Exception as e:
         st.error(f"エラー: {e}")
 
+    # キュー状態
+    st.markdown("---")
+    st.subheader("⚙️ タスクキュー状態")
+    try:
+        qresp = requests.get(f"{FASTAPI_URL}/queue/status", headers=get_headers(), timeout=3)
+        if qresp.status_code == 200:
+            qdata = qresp.json()
+            qc1, qc2, qc3 = st.columns(3)
+            qc1.metric("▶ 実行中", qdata.get("running", 0), help="現在処理中のタスク数")
+            qc2.metric("⏳ 待機中", qdata.get("queued", 0),  help="キューで待機中のタスク数")
+            qc3.metric("⚡ 最大同時実行", qdata.get("max_concurrent", 2))
+            running_ids = qdata.get("running_task_ids", [])
+            if running_ids:
+                st.caption(f"実行中 task_id: {', '.join(running_ids)}")
+    except Exception:
+        st.caption("キュー状態取得失敗")
+
     if st.button("🔄 更新"):
         st.rerun()
 
@@ -145,6 +190,33 @@ if page == "📊 ステータス":
 elif page == "📝 タスク投入":
     st.header("📝 タスク投入")
 
+    # ── プロジェクト選択（フォーム外: 動的に text_input を表示するため）──
+    existing_projects = get_project_list()
+    NEW_PROJECT_LABEL = "(新規作成)"
+    project_options = [NEW_PROJECT_LABEL] + existing_projects
+
+    current_dir_name = Path(__file__).parent.name
+    default_index = (
+        project_options.index(current_dir_name)
+        if current_dir_name in project_options
+        else 0
+    )
+
+    col1_outer, col2_outer = st.columns(2)
+    with col1_outer:
+        selected_project = st.selectbox(
+            "プロジェクト名",
+            options=project_options,
+            index=default_index,
+        )
+        if selected_project == NEW_PROJECT_LABEL:
+            new_project_name = st.text_input(
+                "新規プロジェクト名を入力",
+                placeholder="例: my-new-project",
+            )
+        else:
+            new_project_name = ""
+
     with st.form("task_form"):
         instruction = st.text_area(
             "タスク内容",
@@ -152,59 +224,73 @@ elif page == "📝 タスク投入":
             placeholder="例: Pythonで1から10までの合計を計算する関数を書いて",
         )
 
-        col1, col2 = st.columns(2)
-        with col1:
-            project = st.text_input("プロジェクト名", value="langgraph-orchestrator")
-        with col2:
-            model = st.selectbox(
-                "モデル",
-                [
-                    "（デフォルト）",
-                    "qwen2.5-coder:14b",
-                    "qwen2.5-coder:7b",
-                    "deepseek-r1:14b",
-                    "gemini-2.5-flash",
-                ],
-            )
+        model = st.selectbox(
+            "モデル",
+            [
+                "（デフォルト）",
+                "qwen2.5-coder:14b",
+                "qwen2.5-coder:7b",
+                "deepseek-r1:14b",
+                "gemini-2.5-flash",
+            ],
+        )
+
+        require_approval = st.toggle(
+            "🔔 承認モード（2段階確認）",
+            value=False,
+            help="ONにすると、①設計確認 と ②ファイル保存前 の2回、あなたの承認を待ってから処理を進めます。"
+        )
 
         submitted = st.form_submit_button("🚀 タスク送信", use_container_width=True)
 
     if submitted:
+        # project_id の確定
+        if selected_project == NEW_PROJECT_LABEL:
+            project_id = new_project_name.strip()
+        else:
+            project_id = selected_project
+
         if not instruction.strip():
             st.warning("タスク内容を入力してください")
+        elif selected_project == NEW_PROJECT_LABEL and not project_id:
+            st.warning("新規プロジェクト名を入力してください")
         else:
             payload: dict = {
                 "instruction": instruction.strip(),
-                "project_id": project or "default",
-                "requester": "streamlit",
+                "project_id":  project_id or "default",
+                "requester":   "streamlit",
+                "require_approval": require_approval,
             }
             if model != "（デフォルト）":
                 payload["model"] = model
 
-            with st.spinner("タスクを実行中... (完了まで数分かかる場合があります)"):
+            with st.spinner("タスクをキューに追加中..."):
                 try:
                     resp = requests.post(
                         f"{FASTAPI_URL}/task",
                         json=payload,
                         headers=get_headers(),
-                        timeout=600,
+                        timeout=30,
                     )
                     if resp.status_code == 200:
-                        st.success("✅ タスクが完了しました！")
                         data = resp.json()
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("task_id", data.get("task_id", ""))
-                        c2.metric("トークン", f"{data.get('tokens', 0):,}")
-                        c3.metric("複雑度スコア", data.get("complexity_score") or "-")
-                        if data.get("result"):
-                            st.subheader("実行結果")
-                            st.code(data["result"], language="python")
+                        task_id       = data.get("task_id", "")
+                        queue_pos     = data.get("queue_position", 0)
+                        needs_approval = data.get("require_approval", False)
+
+                        st.success(f"✅ タスクをキューに追加しました（待機: {queue_pos}件）")
+                        st.code(f"task_id: {task_id}")
+
+                        if needs_approval:
+                            st.info("🔔 承認モードON: 「🔔 承認待ち」ページで設計確認が必要です。")
+                        else:
+                            st.info("⏳ バックグラウンドで処理中です。「📋 タスク履歴」で結果を確認してください。")
                     elif resp.status_code == 401:
                         st.error("認証エラー: API Keyを確認してください")
                     else:
                         st.error(f"送信失敗: {resp.status_code} — {resp.text[:200]}")
                 except requests.exceptions.Timeout:
-                    st.warning("タイムアウトしました（タスクはバックグラウンドで実行中の可能性があります）")
+                    st.warning("タイムアウト（FastAPIが応答しませんでした）")
                 except requests.exceptions.ConnectionError:
                     st.error("FastAPIに接続できません")
                 except Exception as e:
@@ -344,3 +430,184 @@ elif page == "📋 タスク履歴":
 
     except Exception as e:
         st.error(f"履歴取得失敗: {e}")
+
+
+# ══════════════════════════════════════════════════════════════
+# ページ4: 承認待ち
+# ══════════════════════════════════════════════════════════════
+elif page == "🔔 承認待ち":
+    st.header("🔔 承認待ちタスク")
+
+    col_refresh, col_auto = st.columns([1, 3])
+    with col_refresh:
+        if st.button("🔄 更新"):
+            st.rerun()
+    with col_auto:
+        st.caption("承認が完了するとバックグラウンドのタスクが自動再開されます")
+
+    try:
+        resp = requests.get(f"{FASTAPI_URL}/approvals", headers=get_headers(), timeout=5)
+        if resp.status_code == 200:
+            pending = resp.json().get("pending", [])
+            if not pending:
+                st.success("✅ 現在、承認待ちのタスクはありません")
+            else:
+                for item in pending:
+                    task_id = item["task_id"]
+                    stage   = item["stage"]
+                    stage_label = "① 設計確認" if stage == "design" else "② ファイル保存前確認"
+                    created = item.get("created_at", "")[:16]
+
+                    with st.expander(f"🕐 [{stage_label}] task_id: {task_id}  ({created})", expanded=True):
+                        st.markdown(item.get("preview", ""))
+                        st.markdown("---")
+
+                        col_ok, col_ng = st.columns(2)
+                        with col_ok:
+                            if st.button("✅ 承認して続行", key=f"approve_{task_id}_{stage}", use_container_width=True):
+                                r = requests.post(
+                                    f"{FASTAPI_URL}/approve/{task_id}/{stage}",
+                                    json={"approved": True, "feedback": ""},
+                                    headers=get_headers(), timeout=5,
+                                )
+                                if r.status_code == 200:
+                                    st.success("✅ 承認しました。タスクを再開します。")
+                                    st.rerun()
+                                else:
+                                    st.error(f"エラー: {r.text}")
+
+                        with col_ng:
+                            with st.form(key=f"reject_form_{task_id}_{stage}"):
+                                feedback = st.text_area(
+                                    "✏️ 修正指示を入力して却下",
+                                    placeholder="例: 変数名を snake_case に統一して",
+                                    height=80,
+                                    key=f"fb_{task_id}_{stage}",
+                                )
+                                if st.form_submit_button("❌ 却下して修正依頼", use_container_width=True):
+                                    if not feedback.strip():
+                                        st.warning("修正指示を入力してください")
+                                    else:
+                                        r = requests.post(
+                                            f"{FASTAPI_URL}/approve/{task_id}/{stage}",
+                                            json={"approved": False, "feedback": feedback.strip()},
+                                            headers=get_headers(), timeout=5,
+                                        )
+                                        if r.status_code == 200:
+                                            st.warning("🔄 却下しました。修正指示を送信しました。")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"エラー: {r.text}")
+        else:
+            st.error(f"承認待ち取得失敗: {resp.status_code}")
+    except requests.exceptions.ConnectionError:
+        st.error("FastAPIに接続できません")
+    except Exception as e:
+        st.error(f"エラー: {e}")
+
+    # 承認履歴
+    st.markdown("---")
+    st.subheader("📜 承認履歴")
+    try:
+        resp = requests.get(f"{FASTAPI_URL}/approvals/history", headers=get_headers(), timeout=5)
+        if resp.status_code == 200:
+            history = resp.json().get("history", [])
+            if history:
+                import pandas as pd
+                df_hist = pd.DataFrame(history)
+                df_hist["status"] = df_hist["status"].map(
+                    {"pending": "⏳", "approved": "✅", "rejected": "❌"}
+                ).fillna(df_hist["status"])
+                st.dataframe(
+                    df_hist[["task_id", "stage", "status", "feedback", "created_at", "resolved_at"]],
+                    use_container_width=True, hide_index=True,
+                )
+    except Exception:
+        pass
+
+
+# ══════════════════════════════════════════════════════════════
+# ページ5: レポート閲覧
+# ══════════════════════════════════════════════════════════════
+elif page == "📈 レポート":
+    st.header("📈 レポート閲覧")
+
+    reports_dir = Path(__file__).parent / "reports"
+    if not reports_dir.exists():
+        st.warning("reports/ ディレクトリが存在しません")
+    else:
+        md_files = sorted(reports_dir.glob("*.md"), reverse=True)
+        if not md_files:
+            st.info("レポートファイルがありません")
+        else:
+            file_names = [f.name for f in md_files]
+            selected = st.selectbox("📄 レポートを選択", file_names)
+            if selected:
+                report_path = reports_dir / selected
+                content = report_path.read_text(encoding="utf-8")
+                st.markdown(f"**ファイル**: `{selected}` | **サイズ**: {len(content):,} bytes")
+                st.markdown("---")
+                st.markdown(content)
+
+
+# ══════════════════════════════════════════════════════════════
+# ページ6: プロンプト編集
+# ══════════════════════════════════════════════════════════════
+elif page == "⚙️ プロンプト":
+    st.header("⚙️ プロンプト編集")
+    st.caption("agents のプロンプトをブラウザ上で編集・保存できます。変更は即時反映されます。")
+
+    prompts_dir = Path(__file__).parent / "prompts"
+    prompts_dir.mkdir(exist_ok=True)
+    prompt_files = sorted(prompts_dir.glob("*.md"))
+
+    if not prompt_files:
+        st.warning("prompts/ ディレクトリにファイルがありません")
+    else:
+        agent_names  = [f.stem for f in prompt_files]
+        selected_agent = st.selectbox("🤖 エージェントを選択", agent_names)
+
+        if selected_agent:
+            prompt_path   = prompts_dir / f"{selected_agent}.md"
+            original_text = prompt_path.read_text(encoding="utf-8")
+
+            edited_text = st.text_area(
+                "プロンプト内容",
+                value=original_text,
+                height=400,
+                key=f"prompt_editor_{selected_agent}",
+            )
+
+            # 差分表示
+            if edited_text != original_text:
+                import difflib
+                diff = difflib.unified_diff(
+                    original_text.splitlines(keepends=True),
+                    edited_text.splitlines(keepends=True),
+                    fromfile="現在",
+                    tofile="編集後",
+                )
+                diff_text = "".join(diff)
+                if diff_text:
+                    st.subheader("📊 変更差分")
+                    st.code(diff_text, language="diff")
+
+            col_save, col_reset = st.columns(2)
+            with col_save:
+                if st.button("💾 保存", use_container_width=True, type="primary"):
+                    prompt_path.write_text(edited_text, encoding="utf-8")
+                    st.success(f"✅ {selected_agent}.md を保存しました")
+                    st.rerun()
+
+            with col_reset:
+                if st.button("🔄 デフォルトにリセット", use_container_width=True):
+                    try:
+                        import sys
+                        sys.path.insert(0, str(Path(__file__).parent))
+                        from src.prompt_loader import reset_prompt
+                        reset_prompt(selected_agent)
+                        st.success(f"✅ {selected_agent}.md をリセットしました")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"リセット失敗: {e}")
+
