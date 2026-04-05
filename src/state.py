@@ -13,7 +13,11 @@ class TaskState(TypedDict):
     # 実行情報
     model_used:     Optional[str]
     token_count:    Optional[int]
-    cost_estimate:  Optional[float]
+    input_tokens:   Optional[int]    # M6-2: 入力トークン数
+    output_tokens:  Optional[int]    # M6-2: 出力トークン数
+    cost_estimate:  Optional[float]  # 後方互換（旧概算値、cost_usd に移行）
+    cost_usd:       Optional[float]  # M6-2: モデル別正確なコスト（USD）
+    cost_jpy:       Optional[float]  # M6-2: 円換算コスト（参考値）
     started_at:     Optional[str]
     completed_at:   Optional[str]
 

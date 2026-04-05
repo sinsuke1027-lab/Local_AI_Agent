@@ -13,6 +13,7 @@ from src.complexity_scorer import score_complexity
 from src.debate_agent import run_debate, DebateResult
 from src.prompt_loader import render_prompt
 from src.gemini_wrapper import GeminiWrapper
+from src.cost_table import calculate_cost, calculate_cost_jpy
 
 logger = logging.getLogger(__name__)
 
@@ -360,19 +361,30 @@ def coder_agent(state: TaskState) -> TaskState:
     )
 
     try:
-        response    = model.invoke(prompt)
-        result      = response.content
-        token_count = (
-            response.usage_metadata.get("total_tokens", 0)
-            if hasattr(response, "usage_metadata") and response.usage_metadata
-            else 0
-        )
+        response = model.invoke(prompt)
+        result   = response.content
+        usage    = response.usage_metadata if hasattr(response, "usage_metadata") and response.usage_metadata else {}
+        in_tok   = usage.get("input_tokens",  0) or 0
+        out_tok  = usage.get("output_tokens", 0) or 0
+        total_tok = usage.get("total_tokens", 0) or (in_tok + out_tok)
+        if in_tok == 0 and out_tok == 0 and total_tok > 0:
+            # input/output 非分離モデル（Ollama等）: 7:3 で概算分割
+            in_tok  = int(total_tok * 0.7)
+            out_tok = total_tok - in_tok
+
+        model_name = state.get("model_used", "")
+        cost_usd   = calculate_cost(model_name, in_tok, out_tok)
+        cost_jpy   = calculate_cost_jpy(cost_usd)
 
         return {
             **state,
             "result":        result,
-            "token_count":   token_count,
-            "cost_estimate": round(token_count * 0.000002, 4),
+            "token_count":   total_tok,
+            "input_tokens":  in_tok,
+            "output_tokens": out_tok,
+            "cost_estimate": round(cost_usd, 6),   # 後方互換
+            "cost_usd":      round(cost_usd, 6),
+            "cost_jpy":      round(cost_jpy, 4),
         }
     except Exception as e:
         return {
@@ -383,24 +395,30 @@ def coder_agent(state: TaskState) -> TaskState:
 
 
 # ── ノード③ 履歴保存 + 教訓抽出 + 次タスク提案 ──
-def _ensure_debate_columns(conn) -> None:
-    """debate関連カラムが存在しなければ追加する（冪等）。"""
+def _ensure_extra_columns(conn) -> None:
+    """debate・コスト関連カラムが存在しなければ追加する（冪等）。"""
     cursor = conn.execute("PRAGMA table_info(tasks)")
     existing = {row[1] for row in cursor.fetchall()}
 
-    stmts = []
-    if "complexity_score" not in existing:
-        stmts.append("ALTER TABLE tasks ADD COLUMN complexity_score INTEGER")
-    if "debate_triggered" not in existing:
-        stmts.append("ALTER TABLE tasks ADD COLUMN debate_triggered BOOLEAN DEFAULT 0")
-    if "debate_result" not in existing:
-        stmts.append("ALTER TABLE tasks ADD COLUMN debate_result TEXT")
-
+    additions = [
+        ("complexity_score", "INTEGER"),
+        ("debate_triggered", "BOOLEAN DEFAULT 0"),
+        ("debate_result",    "TEXT"),
+        ("input_tokens",     "INTEGER"),
+        ("output_tokens",    "INTEGER"),
+        ("cost_usd",         "REAL"),
+        ("cost_jpy",         "REAL"),
+    ]
+    stmts = [
+        f"ALTER TABLE tasks ADD COLUMN {col} {dtype}"
+        for col, dtype in additions
+        if col not in existing
+    ]
     for stmt in stmts:
         conn.execute(stmt)
     if stmts:
         conn.commit()
-        logger.info("Added %d debate columns to tasks table", len(stmts))
+        logger.info("DB migration: added %d column(s) to tasks table", len(stmts))
 
 
 def save_history(state: TaskState) -> TaskState:
@@ -428,16 +446,17 @@ def save_history(state: TaskState) -> TaskState:
         )
     """)
 
-    # P9: debate関連カラムのマイグレーション（初回のみ実行、以降はスキップ）
-    _ensure_debate_columns(conn)
+    # カラムマイグレーション（冪等: 存在しないカラムのみ追加）
+    _ensure_extra_columns(conn)
 
     completed_at = datetime.now().isoformat()
     conn.execute("""
         INSERT OR REPLACE INTO tasks
             (task_id, project_id, instruction, model_used, token_count, cost_estimate,
              result, error_message, started_at, completed_at, channel_id, requester,
-             complexity_score, debate_triggered, debate_result)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             complexity_score, debate_triggered, debate_result,
+             input_tokens, output_tokens, cost_usd, cost_jpy)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         state.get("task_id"),
         state.get("project_id"),
@@ -454,6 +473,10 @@ def save_history(state: TaskState) -> TaskState:
         state.get("complexity_score"),
         1 if state.get("debate_triggered") else 0,
         state.get("debate_result", ""),
+        state.get("input_tokens"),
+        state.get("output_tokens"),
+        state.get("cost_usd"),
+        state.get("cost_jpy"),
     ))
     conn.commit()
     conn.close()
@@ -755,19 +778,33 @@ def consultant_agent(state: TaskState) -> TaskState:
     )
 
     try:
-        response = model.invoke(prompt)
+        response    = model.invoke(prompt)
         result_text = response.content if hasattr(response, "content") else str(response)
 
-        token_count = 0
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            token_count = getattr(response.usage_metadata, "total_token_count", 0) or 0
+        usage    = response.usage_metadata if hasattr(response, "usage_metadata") and response.usage_metadata else {}
+        in_tok   = usage.get("input_tokens",  0) or 0
+        out_tok  = usage.get("output_tokens", 0) or 0
+        total_tok = usage.get("total_tokens", 0) or (in_tok + out_tok)
+        if in_tok == 0 and out_tok == 0 and total_tok > 0:
+            in_tok  = int(total_tok * 0.7)
+            out_tok = total_tok - in_tok
 
-        logger.info("[consultant_agent] Done. tokens=%d", token_count)
+        model_name = state.get("model_used", "")
+        cost_usd   = calculate_cost(model_name, in_tok, out_tok)
+        cost_jpy   = calculate_cost_jpy(cost_usd)
+
+        logger.info("[consultant_agent] Done. tokens=%d (in=%d out=%d) cost=$%.6f",
+                    total_tok, in_tok, out_tok, cost_usd)
 
         return {
             **state,
-            "result":      result_text,
-            "token_count": (state.get("token_count") or 0) + token_count,
+            "result":        result_text,
+            "token_count":   (state.get("token_count") or 0) + total_tok,
+            "input_tokens":  (state.get("input_tokens")  or 0) + in_tok,
+            "output_tokens": (state.get("output_tokens") or 0) + out_tok,
+            "cost_estimate": round((state.get("cost_estimate") or 0) + cost_usd, 6),
+            "cost_usd":      round((state.get("cost_usd")      or 0) + cost_usd, 6),
+            "cost_jpy":      round((state.get("cost_jpy")      or 0) + cost_jpy, 4),
         }
 
     except Exception as e:

@@ -37,15 +37,16 @@ class GeminiWrapper:
             contents=prompt,
         )
 
-        # トークン数を取得
+        # トークン数を取得（input/output 分離）
         usage: dict = {}
         if hasattr(response, "usage_metadata") and response.usage_metadata:
+            input_t  = getattr(response.usage_metadata, "prompt_token_count",     0) or 0
+            output_t = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+            total_t  = getattr(response.usage_metadata, "total_token_count",      0) or (input_t + output_t)
             usage = {
-                "total_tokens": (
-                    getattr(response.usage_metadata, "total_token_count", 0) or
-                    (getattr(response.usage_metadata, "prompt_token_count", 0) or 0) +
-                    (getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
-                )
+                "input_tokens":  input_t,
+                "output_tokens": output_t,
+                "total_tokens":  total_t,
             }
 
         class _GeminiResponse:
