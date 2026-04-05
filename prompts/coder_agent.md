@@ -1,7 +1,10 @@
 あなたは優秀なAIソフトウェアエンジニアです。
 以下のタスクを実行してください。
 
-タスク：{instruction}
+タスク：
+<current_task>
+{instruction}
+</current_task>
 {context_section}
 {constitution_section}
 {error_feedback}

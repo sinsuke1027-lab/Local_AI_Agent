@@ -79,7 +79,7 @@ st.title("🤖 LangGraph Orchestrator")
 # ── サイドバー ──────────────────────────────────────────────
 page = st.sidebar.radio(
     "ページ",
-    ["📊 ステータス", "📝 タスク投入", "📋 タスク履歴", "🔔 承認待ち", "📈 レポート", "⚙️ プロンプト"],
+    ["📊 ステータス", "📝 タスク投入", "📋 タスク履歴", "🔔 承認待ち", "📈 レポート", "⚙️ プロンプト", "🚀 サービス管理"],
 )
 
 st.sidebar.markdown("---")
@@ -610,4 +610,352 @@ elif page == "⚙️ プロンプト":
                         st.rerun()
                     except Exception as e:
                         st.error(f"リセット失敗: {e}")
+
+
+# ══════════════════════════════════════════════════════════════
+# ページ7: サービス管理
+# ══════════════════════════════════════════════════════════════
+elif page == "🚀 サービス管理":
+    import streamlit.components.v1 as components
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent))
+    from src.service_manager import ServiceManager
+
+    st.header("🚀 サービス管理")
+    st.caption("AIが生成した Streamlit アプリを起動・停止・プレビューできます（ポート: 8502〜8510）")
+
+    sm = ServiceManager()
+
+    # ── session_state 初期化 ─────────────────────────────────
+    if "preview_service_id" not in st.session_state:
+        st.session_state["preview_service_id"] = None
+    # iframeを強制再読み込みするためのカウンター
+    if "iframe_reload_count" not in st.session_state:
+        st.session_state["iframe_reload_count"] = 0
+
+    # ── セクション1: 起動中サービス一覧 ──────────────────────
+    st.subheader("📋 起動中サービス一覧")
+
+    col_ref, col_all = st.columns([1, 3])
+    with col_ref:
+        if st.button("🔄 更新"):
+            st.rerun()
+    with col_all:
+        show_stopped = st.checkbox("停止済みも表示", value=False)
+
+    try:
+        services = sm.list_services(include_stopped=show_stopped)
+    except Exception as e:
+        st.error(f"一覧取得失敗: {e}")
+        services = []
+
+    if not services:
+        st.info("起動中のサービスはありません")
+    else:
+        for svc in services:
+            status      = svc.get("status", "unknown")
+            status_icon = "🟢" if status == "running" else ("🔴" if status == "error" else "⚫")
+            port        = svc.get("port", "?")
+            url         = svc.get("url", f"http://localhost:{port}")
+            tailscale_url = f"http://100.72.133.8:{port}"
+            started     = (svc.get("started_at") or "")[:16]
+            sid         = svc["service_id"]
+            is_previewing = st.session_state["preview_service_id"] == sid
+
+            with st.expander(
+                f"{status_icon} **{svc['project_name']}** — port {port}  ({started})",
+                expanded=(status == "running"),
+            ):
+                c1, c2, c3 = st.columns([2, 1, 1])
+                c1.caption(f"📂 {svc['app_path']}")
+                c2.caption(f"PID: {svc.get('pid', '-')}")
+                c3.caption(f"状態: {status}")
+
+                if status == "running":
+                    b1, b2, b3, b4 = st.columns(4)
+                    with b1:
+                        preview_label = "📺 プレビュー中" if is_previewing else "📺 プレビュー"
+                        if st.button(preview_label, key=f"prev_{sid}", use_container_width=True, type="primary" if is_previewing else "secondary"):
+                            if is_previewing:
+                                st.session_state["preview_service_id"] = None
+                            else:
+                                st.session_state["preview_service_id"] = sid
+                            st.rerun()
+                    with b2:
+                        st.link_button("🔗 別タブ", url, use_container_width=True)
+                    with b3:
+                        st.link_button("🌐 Tailscale", tailscale_url, use_container_width=True)
+                    with b4:
+                        if st.button("⏹ 停止", key=f"stop_{sid}", use_container_width=True):
+                            try:
+                                sm.stop(sid)
+                                if st.session_state["preview_service_id"] == sid:
+                                    st.session_state["preview_service_id"] = None
+                                st.success("停止しました")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"停止失敗: {e}")
+
+    # ── セクション2: プレビューエリア（左右分割） ──────────────
+    preview_id = st.session_state.get("preview_service_id")
+    if preview_id:
+        preview_svc = sm.get(preview_id)
+
+        if not preview_svc or preview_svc.get("status") != "running":
+            st.session_state["preview_service_id"] = None
+            st.warning("サービスが停止しています。プレビューを閉じました。")
+            st.rerun()
+        else:
+            port = preview_svc["port"]
+            url  = preview_svc["url"]
+            tailscale_url = f"http://100.72.133.8:{port}"
+
+            st.markdown("---")
+            st.subheader(f"📺 プレビュー: {preview_svc['project_name']}")
+
+            left_col, right_col = st.columns([1, 2])
+
+            # ── 左パネル: 指示パネル ─────────────────────────
+            with left_col:
+                st.caption(f"📂 **{preview_svc['project_name']}**")
+                st.caption(f"🔗 {url}")
+                st.caption(f"🌐 Tailscale: {tailscale_url}")
+
+                b_r, b_s, b_l = st.columns(3)
+                with b_r:
+                    if st.button("🔄 再読込", key="iframe_reload", use_container_width=True):
+                        st.session_state["iframe_reload_count"] += 1
+                        st.rerun()
+                with b_s:
+                    if st.button("⏹ 停止", key="preview_stop", use_container_width=True):
+                        sm.stop(preview_id)
+                        st.session_state["preview_service_id"] = None
+                        st.success("停止しました")
+                        st.rerun()
+                with b_l:
+                    st.link_button("🔗 別タブ", url, use_container_width=True)
+
+                # ── M8-3: スクリーンショット ───────────────────
+                st.divider()
+                st.subheader("📸 スクリーンショット")
+
+                from src.screenshot_agent import capture_screenshot as _capture
+
+                if st.button("📸 今の画面をキャプチャ", use_container_width=True, key="capture_btn"):
+                    with st.spinner("撮影中..."):
+                        cap_result = _capture(
+                            url=url,
+                            project_name=preview_svc["project_name"],
+                        )
+                    if cap_result["success"]:
+                        st.session_state["last_capture"] = cap_result
+                        st.success(f"撮影完了: {Path(cap_result['path']).name}")
+                    else:
+                        st.error(f"撮影失敗: {cap_result['error']}")
+
+                # 撮影済み画像の表示と添付
+                if "last_capture" in st.session_state:
+                    cap = st.session_state["last_capture"]
+                    if cap.get("path") and Path(cap["path"]).exists():
+                        st.image(
+                            cap["path"],
+                            caption=f"撮影: {(cap.get('captured_at') or '')[:19]}",
+                            use_container_width=True,
+                        )
+                        attach_col, clear_col = st.columns(2)
+                        with attach_col:
+                            if st.button("📎 修正指示に添付", use_container_width=True, key="attach_btn"):
+                                st.session_state["attach_screenshot"] = cap["path"]
+                                st.info("添付しました。下の修正指示を入力して投入してください。")
+                        with clear_col:
+                            if st.button("🗑 クリア", use_container_width=True, key="clear_cap_btn"):
+                                del st.session_state["last_capture"]
+                                st.session_state.pop("attach_screenshot", None)
+                                st.rerun()
+
+                st.divider()
+
+                # タスク投入エリア
+                st.subheader("📝 修正指示")
+
+                # 添付中スクリーンショットの表示
+                if "attach_screenshot" in st.session_state:
+                    attach_path = st.session_state["attach_screenshot"]
+                    if Path(attach_path).exists():
+                        st.image(attach_path, caption="添付中のスクリーンショット", width=200)
+                    if st.button("❌ 添付を外す", key="detach_btn"):
+                        for k in ("attach_screenshot", "vision_instruction"):
+                            st.session_state.pop(k, None)
+                        st.rerun()
+
+                    # ── M5-3: Vision 解釈エリア ───────────────────
+                    st.divider()
+                    st.subheader("🔍 Vision 解釈")
+
+                    vision_hint = st.text_input(
+                        "修正のポイントを一言で（任意）",
+                        placeholder="例: ボタンが見づらい / レイアウトを整えて",
+                        key="vision_hint",
+                    )
+
+                    if st.button("🔍 AIに画像を解釈させる", use_container_width=True, key="vision_btn"):
+                        from src.vision_agent import interpret_screenshot as _interpret
+                        with st.spinner("Vision API で解釈中..."):
+                            v_result = _interpret(
+                                image_path=st.session_state["attach_screenshot"],
+                                user_instruction=vision_hint or "UIの問題点を特定して修正指示を生成してください",
+                                project_name=preview_svc["project_name"],
+                            )
+                        if v_result["success"]:
+                            st.session_state["vision_instruction"] = v_result["interpreted_instruction"]
+                            st.success("解釈完了")
+                        else:
+                            st.error(f"解釈失敗: {v_result['error']}")
+
+                    # 解釈結果の表示・編集 + 専用投入ボタン
+                    if "vision_instruction" in st.session_state:
+                        st.caption("生成された指示文（編集可）")
+                        edited_vision = st.text_area(
+                            label="指示文",
+                            value=st.session_state["vision_instruction"],
+                            height=100,
+                            key="edited_vision_instruction",
+                            label_visibility="collapsed",
+                        )
+                        require_approval_vision = st.checkbox(
+                            "🔔 承認モード", value=False, key="vision_approval"
+                        )
+                        if st.button("📝 この指示でタスク投入", use_container_width=True, type="primary", key="vision_submit"):
+                            vision_payload = {
+                                "instruction":      edited_vision.strip(),
+                                "project_id":       preview_svc["project_name"],
+                                "requester":        "streamlit_vision",
+                                "require_approval": require_approval_vision,
+                            }
+                            try:
+                                resp = requests.post(
+                                    f"{FASTAPI_URL}/task",
+                                    json=vision_payload,
+                                    headers=get_headers(),
+                                    timeout=30,
+                                )
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    st.toast("タスクを投入しました 🚀")
+                                    st.caption(f"Task ID: {data.get('task_id', '')}")
+                                    # 使用済みセッションをクリア
+                                    for k in ("attach_screenshot", "vision_instruction"):
+                                        st.session_state.pop(k, None)
+                                else:
+                                    st.error(f"投入失敗: {resp.status_code}")
+                            except requests.exceptions.ConnectionError:
+                                st.error("FastAPIに接続できません")
+                            except Exception as e:
+                                st.error(f"エラー: {e}")
+
+                st.divider()
+
+                # ── 手動タスク投入エリア ──────────────────────
+                task_input = st.text_area(
+                    "このアプリへの修正指示",
+                    placeholder="例: ボタンを画面中央に配置して\n例: タイトルのフォントを大きくして",
+                    height=130,
+                    key="preview_task_input",
+                )
+                require_approval_preview = st.checkbox(
+                    "🔔 承認モード", value=False, key="preview_approval"
+                )
+
+                if st.button("📝 タスク投入", use_container_width=True, type="primary", key="preview_submit"):
+                    if not task_input.strip():
+                        st.warning("修正指示を入力してください")
+                    else:
+                        # スクリーンショットパスを指示文に含める（Pattern C）
+                        # Vision 解釈済みの場合はそちらを使うことを推奨するが、
+                        # 手動入力でも独立して使用できる。
+                        final_instruction = task_input.strip()
+                        screenshot_path = st.session_state.get("attach_screenshot")
+                        if screenshot_path:
+                            final_instruction += f"\n\n[参考スクリーンショット: {screenshot_path}]"
+
+                        payload = {
+                            "instruction":      final_instruction,
+                            "project_id":       preview_svc["project_name"],
+                            "requester":        "streamlit_preview",
+                            "require_approval": require_approval_preview,
+                        }
+                        try:
+                            resp = requests.post(
+                                f"{FASTAPI_URL}/task",
+                                json=payload,
+                                headers=get_headers(),
+                                timeout=30,
+                            )
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                st.toast("タスクを投入しました 🚀")
+                                st.caption(f"Task ID: {data.get('task_id', '')}")
+                                st.session_state.pop("attach_screenshot", None)
+                            else:
+                                st.error(f"投入失敗: {resp.status_code}")
+                        except requests.exceptions.ConnectionError:
+                            st.error("FastAPIに接続できません")
+                        except Exception as e:
+                            st.error(f"エラー: {e}")
+
+            # ── 右パネル: iframe ─────────────────────────────
+            with right_col:
+                # iframe src にリロードカウンターをクエリパラメータとして付与し
+                # 「🔄 再読込」ボタン押下時に新しい src として認識させる
+                reload_count = st.session_state["iframe_reload_count"]
+                iframe_src = f"{url}?_r={reload_count}"
+
+                try:
+                    components.iframe(iframe_src, height=700, scrolling=True)
+                except Exception:
+                    # iframe がブロックされた場合のフォールバック
+                    st.warning(
+                        "iframe の表示がブロックされました。\n"
+                        "別タブでアプリを確認してください。"
+                    )
+                    st.link_button("🔗 アプリを別タブで開く", url, use_container_width=True)
+                    st.link_button("🌐 Tailscale で開く", tailscale_url, use_container_width=True)
+
+    # ── セクション3: 新規起動フォーム ────────────────────────
+    st.markdown("---")
+    st.subheader("▶ 新規起動")
+
+    with st.form("launch_form"):
+        launch_project = st.text_input(
+            "プロジェクト名",
+            placeholder="例: my-dashboard",
+        )
+        launch_path = st.text_input(
+            "アプリファイルパス",
+            placeholder="例: ~/projects/myapp/app.py",
+        )
+        launched = st.form_submit_button("🚀 起動", use_container_width=True, type="primary")
+
+    if launched:
+        if not launch_project.strip():
+            st.warning("プロジェクト名を入力してください")
+        elif not launch_path.strip():
+            st.warning("アプリファイルパスを入力してください")
+        else:
+            try:
+                svc = sm.start(launch_project.strip(), launch_path.strip())
+                st.success(f"✅ 起動しました → {svc['url']}  (port {svc['port']})")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.link_button("🔗 別タブで開く", svc["url"], use_container_width=True)
+                with col_b:
+                    if st.button("📺 プレビューを開く", use_container_width=True, key="open_preview_after_launch"):
+                        st.session_state["preview_service_id"] = svc["service_id"]
+                st.rerun()
+            except FileNotFoundError as e:
+                st.error(f"ファイルが見つかりません: {e}")
+            except RuntimeError as e:
+                st.error(f"起動失敗: {e}")
+            except Exception as e:
+                st.error(f"予期しないエラー: {e}")
 

@@ -1,4 +1,5 @@
 import pytest
+from fibonacci import fibonacci
 
 def test_fibonacci_zero():
     assert fibonacci(0) == []

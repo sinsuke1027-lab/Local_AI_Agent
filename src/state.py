@@ -26,6 +26,7 @@ class TaskState(TypedDict):
 
     # P9: ディベート
     complexity_score:   Optional[int]
+    debate_threshold:   Optional[int]    # projects.json から動的に取得（T2）
     debate_result:      Optional[str]
     debate_triggered:   Optional[bool]
     debate_feedback:    Optional[str]
@@ -56,3 +57,9 @@ class TaskState(TypedDict):
 
     # M6-4: コンサルタントモード
     is_consultation:  Optional[bool]   # 相談・要件定義モードON/OFF
+
+    # M8-3 / M5-3: スクリーンショット連携
+    # capture_screenshot() の戻り値 path を格納。
+    # vision_agent.interpret_screenshot() の入力として使う。
+    screenshot_path:  Optional[str]    # screenshots/*.png の絶対パス
+    vision_hint:      Optional[str]    # ユーザーの自然言語ヒント（Vision API へのコンテキスト）

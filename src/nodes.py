@@ -12,6 +12,7 @@ from src.task_history_indexer import TaskHistoryIndexer
 from src.complexity_scorer import score_complexity
 from src.debate_agent import run_debate, DebateResult
 from src.prompt_loader import render_prompt
+from src.gemini_wrapper import GeminiWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -27,43 +28,6 @@ MODEL_LOCAL_FAST  = "qwen2.5-coder:7b"
 # P9: ディベート閾値（projects.jsonのdefaults.debate_thresholdで上書き可能）
 DEBATE_THRESHOLD = 7
 
-
-class GeminiWrapper:
-    """Google公式SDKをlangchain風のインターフェースで使うラッパー"""
-
-    def __init__(self, model_name: str):
-        from google import genai
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY が .env に設定されていません")
-        self.client = genai.Client(api_key=api_key)
-        self.model_name = model_name
-
-    def invoke(self, prompt: str):
-        """langchainのmodel.invoke()と同じインターフェースで呼び出す"""
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=prompt,
-        )
-
-        # langchain風のレスポンスオブジェクトを返す
-        class GeminiResponse:
-            def __init__(self, text, usage):
-                self.content = text
-                self.usage_metadata = usage
-
-        # トークン数を取得
-        usage = {}
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            usage = {
-                "total_tokens": (
-                    getattr(response.usage_metadata, "total_token_count", 0) or
-                    (getattr(response.usage_metadata, "prompt_token_count", 0) or 0) +
-                    (getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
-                )
-            }
-
-        return GeminiResponse(response.text, usage)
 
 
 def get_model(model_name: str):
@@ -100,7 +64,13 @@ def _resolve_project_dir(state: TaskState) -> str:
 
 
 def _load_constitution(project_dir: str) -> str:
-    """共通憲法 + プロジェクト固有憲法を読み込む"""
+    """共通憲法 + プロジェクト固有憲法を読み込む。
+
+    優先順位:
+      1. 共通憲法 (langgraph-orchestrator/constitution.md)
+      2. Pattern A: projects.json の per-project constitution_path フィールド
+      3. Pattern B: {project_dir}/constitution.md または project_constitution.md
+    """
     sections = []
 
     # 共通憲法
@@ -114,7 +84,32 @@ def _load_constitution(project_dir: str) -> str:
         except Exception:
             pass
 
-    # プロジェクト固有憲法
+    # T4: Pattern A — projects.json の constitution_path を確認
+    project_name = os.path.basename(project_dir) if project_dir else ""
+    if project_name:
+        projects_path = os.path.expanduser(
+            "~/projects/langgraph-orchestrator/projects.json"
+        )
+        if os.path.exists(projects_path):
+            try:
+                with open(projects_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                custom_path = (
+                    data.get("projects", {})
+                       .get(project_name, {})
+                       .get("constitution_path")
+                )
+                if custom_path:
+                    resolved = os.path.expanduser(custom_path)
+                    if os.path.exists(resolved):
+                        with open(resolved, "r", encoding="utf-8") as f:
+                            sections.append(f.read()[:1500])
+                        # Pattern A が見つかったら Pattern B はスキップ
+                        return "\n\n".join(sections) if sections else ""
+            except Exception as e:
+                logger.debug("Failed to read constitution_path from projects.json: %s", e)
+
+    # Pattern B: プロジェクトディレクトリ内を自動検索
     for name in ["constitution.md", "project_constitution.md"]:
         proj_path = os.path.join(project_dir, name)
         if os.path.exists(proj_path):
@@ -173,6 +168,29 @@ def _get_model_for_project(project_dir: str, is_debug: bool = False, complexity_
     return _get_model_by_complexity(complexity_score)
 
 
+def _get_debate_threshold(project_name: str) -> int:
+    """projects.json からプロジェクト固有の debate_threshold を取得する。
+
+    優先順位: per-project debate_threshold > defaults.debate_threshold > DEBATE_THRESHOLD定数
+    """
+    projects_path = os.path.expanduser(
+        "~/projects/langgraph-orchestrator/projects.json"
+    )
+    if os.path.exists(projects_path):
+        try:
+            with open(projects_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            project_info = data.get("projects", {}).get(project_name, {})
+            if "debate_threshold" in project_info:
+                return int(project_info["debate_threshold"])
+            defaults = data.get("defaults", {})
+            if "debate_threshold" in defaults:
+                return int(defaults["debate_threshold"])
+        except Exception as e:
+            logger.warning("Failed to load debate_threshold from projects.json: %s", e)
+    return DEBATE_THRESHOLD
+
+
 # ── ノード① タスク分析 ───────────────────────
 def task_analyzer(state: TaskState) -> TaskState:
     """タスクを分析してモデルと次のノードを決定する"""
@@ -200,6 +218,10 @@ def task_analyzer(state: TaskState) -> TaskState:
     # プロジェクト設定 + 複雑度スコアに基づくモデル選択
     model = _get_model_for_project(project_dir, is_debug, complexity_score=complexity)
     logger.info("Model selected: %s (complexity=%d, is_debug=%s)", model, complexity, is_debug)
+
+    # T2: debate_threshold をプロジェクト設定から動的に取得
+    project_name = os.path.basename(project_dir) if project_dir else ""
+    debate_threshold = _get_debate_threshold(project_name)
 
     # ファイル操作が必要かどうかを判定
     needs_file = any(w in instruction for w in [
@@ -269,6 +291,7 @@ def task_analyzer(state: TaskState) -> TaskState:
         "diff_summary":         full_context,
         "success_patterns":     success_patterns,
         "complexity_score":     complexity,
+        "debate_threshold":     debate_threshold,
         "debate_triggered":     False,
         "is_consultation":      is_consultation,
     }

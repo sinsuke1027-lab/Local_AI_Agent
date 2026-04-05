@@ -1,11 +1,22 @@
 import pytest
-from calc import sum_list
+from typing import List
+from calc import sum_list_bonus
 
-def test_sum_list_integers():
-    assert sum_list([1, 2, 3, 4]) == 10
+@pytest.mark.parametrize("numbers, expected", [
+    ([1, 2, -3, 4], 7),
+    ([-1, -2, -3], 0),
+    ([0, 0, 0], 0),
+    ([5, 6, -2, -8], 11),
+    ([], 0)
+])
+def test_sum_list_bonus(numbers: List[int], expected: int):
+    assert sum_list_bonus(numbers) == expected
 
-def test_sum_list_floats():
-    assert sum_list([1.5, 2.5, 3.5]) == 7.5
-
-def test_sum_list_empty():
-    assert sum_list([]) == 0
+@pytest.mark.parametrize("invalid_input", [
+    "string",
+    [1, "two", 3],
+    None
+])
+def test_invalid_inputs_bonus(invalid_input):
+    with pytest.raises(TypeError):
+        sum_list_bonus(invalid_input)

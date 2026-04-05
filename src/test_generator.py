@@ -10,6 +10,7 @@ MODEL_DEFAULT = "qwen2.5-coder:14b"
 
 class TestGenerator:
     """実装コードからpytestテストコードを自動生成する"""
+    __test__ = False
 
     def __init__(self):
         pass

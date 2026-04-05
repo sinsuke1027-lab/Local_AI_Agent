@@ -284,10 +284,14 @@ class TaskHistoryIndexer:
             return ""
 
         patterns = []
-        for i, item in enumerate(results, 1):
+        for item in results:
             meta = item.get("metadata", {})
             distance = item.get("distance")
 
+            if distance is not None and distance > 0.8:
+                continue
+
+            i = len(patterns) + 1
             header = f"=== 成功パターン {i} ==="
             info_parts = [
                 f"プロジェクト: {meta.get('project_id', 'unknown')}",

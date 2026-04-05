@@ -7,6 +7,7 @@ from dataclasses import dataclass, asdict
 from typing import Optional
 
 from langchain_ollama import ChatOllama
+from src.gemini_wrapper import GeminiWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -121,27 +122,7 @@ class DebateResult:
 def _get_llm(model: str):
     """モデル名に応じてLLMインスタンスを返す。gemini対応済み。"""
     if "gemini" in model.lower():
-        # GeminiWrapperはnodes.pyで定義されているが循環importを避けるため直接実装
-        import os
-        from google import genai
-
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY が .env に設定されていません")
-
-        client = genai.Client(api_key=api_key)
-
-        class _GeminiLLM:
-            def invoke(self, prompt: str):
-                response = client.models.generate_content(
-                    model=model, contents=prompt
-                )
-                class _Resp:
-                    content = response.text
-                return _Resp()
-
-        return _GeminiLLM()
-
+        return GeminiWrapper(model)
     # Ollama（タイムアウトなし — 完了まで待つ）
     return ChatOllama(model=model, base_url=OLLAMA_BASE_URL, temperature=0)
 
