@@ -9,6 +9,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from src.template_loader import list_templates, load_template, render_template
+
 # --- 設定 ---
 FASTAPI_URL = "http://localhost:8001"
 TASK_HISTORY_DB = Path.home() / ".roo" / "task_history.db"
@@ -217,13 +219,57 @@ elif page == "📝 タスク投入":
         else:
             new_project_name = ""
 
-    with st.form("task_form"):
-        instruction = st.text_area(
-            "タスク内容",
-            height=150,
-            placeholder="例: Pythonで1から10までの合計を計算する関数を書いて",
-        )
+    # ── テンプレート選択（フォーム外: 指示文フィールドへの注入のため）──
+    with st.expander("📋 テンプレートから入力する", expanded=False):
+        try:
+            templates = list_templates()
+        except Exception:
+            templates = []
 
+        if not templates:
+            st.caption("テンプレートが見つかりません（templates/*.md を確認してください）")
+        else:
+            template_options = {"（なし）": None} | {t["title"]: t["id"] for t in templates}
+            selected_title = st.selectbox(
+                "テンプレート",
+                list(template_options.keys()),
+                key="tmpl_select",
+            )
+            selected_id = template_options[selected_title]
+
+            if selected_id:
+                try:
+                    tmpl = load_template(selected_id)
+                    st.caption(tmpl["description"])
+
+                    var_values: dict[str, str] = {}
+                    for var in tmpl["variables"]:
+                        var_values[var["name"]] = st.text_input(
+                            label=var["description"],
+                            value=var["default"],
+                            key=f"tvar_{var['name']}",
+                        )
+
+                    if st.button("📝 指示文に反映", key="tmpl_apply"):
+                        rendered = render_template(selected_id, var_values)
+                        st.session_state["template_rendered"] = rendered
+                        st.success("指示文フィールドに反映しました")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"テンプレート読み込みエラー: {e}")
+
+    # ── 指示文（フォーム外: テンプレート展開結果を注入するため）──
+    default_instruction = st.session_state.pop("template_rendered", "")
+    instruction = st.text_area(
+        "タスク内容",
+        value=default_instruction,
+        height=180,
+        placeholder="例: Pythonで1から10までの合計を計算する関数を書いて",
+        key="task_instruction",
+    )
+
+    # ── 送信フォーム ──
+    with st.form("task_form"):
         model = st.selectbox(
             "モデル",
             [
@@ -274,8 +320,8 @@ elif page == "📝 タスク投入":
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        task_id       = data.get("task_id", "")
-                        queue_pos     = data.get("queue_position", 0)
+                        task_id        = data.get("task_id", "")
+                        queue_pos      = data.get("queue_position", 0)
                         needs_approval = data.get("require_approval", False)
 
                         st.success(f"✅ タスクをキューに追加しました（待機: {queue_pos}件）")
