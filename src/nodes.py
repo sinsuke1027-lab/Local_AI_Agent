@@ -32,12 +32,30 @@ DEBATE_THRESHOLD = 7
 
 
 def get_model(model_name: str):
-    """モデル名に応じてOllamaまたはGeminiのモデルを返す"""
+    """モデル名に応じて Ollama または Gemini のモデルを返す。
+
+    Ollama モデルにはメモリ用途に応じた num_ctx / keep_alive を設定する。
+    - 7b: 軽量スコアラー用。5分でアンロードして RAM を空ける
+    - 14b / deepseek: メイン推論用。バッチ中は常時保持（-1）
+    """
     if "gemini" in model_name.lower():
         return GeminiWrapper(model_name)
+
+    # モデルサイズ別パラメータ
+    if "7b" in model_name:
+        return ChatOllama(
+            model=model_name,
+            base_url=OLLAMA_BASE_URL,
+            num_ctx=8192,
+            keep_alive=300,   # 5分でアンロード（RAM節約）
+        )
+
+    # 14b / deepseek-r1 など大型モデル
     return ChatOllama(
         model=model_name,
         base_url=OLLAMA_BASE_URL,
+        num_ctx=32768,
+        keep_alive=-1,        # バッチ中は常時保持
     )
 
 
@@ -375,6 +393,17 @@ def coder_agent(state: TaskState) -> TaskState:
         model_name = state.get("model_used", "")
         cost_usd   = calculate_cost(model_name, in_tok, out_tok)
         cost_jpy   = calculate_cost_jpy(cost_usd)
+
+        # #17: 高複雑度タスクは reviewer/debate で deepseek を使うため、
+        # 14b をここでアンロードして RAM を空ける（24GB 超過防止）
+        complexity = state.get("complexity_score", 0) or 0
+        used_model = state.get("model_used", "")
+        if complexity >= DEBATE_THRESHOLD and "14b" in used_model and "deepseek" not in used_model:
+            try:
+                from src.model_manager import unload_model
+                unload_model(used_model)
+            except Exception:
+                pass
 
         return {
             **state,

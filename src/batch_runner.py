@@ -223,66 +223,78 @@ class BatchRunner:
         """夜間バッチの完全実行（実行→レポート→Discord通知）"""
         self._log("=== 夜間バッチ開始 ===")
 
-        # --- P8: バッチ実行前にタスク履歴をインデックス更新 ---
-        from src.task_history_indexer import TaskHistoryIndexer
         try:
-            indexer = TaskHistoryIndexer()
-            count = indexer.index_recent(hours=24)
-            self._log(f"Pre-batch index: {count} tasks indexed")
-        except Exception as e:
-            self._log(f"Pre-batch index failed: {e}")
+            # --- P8: バッチ実行前にタスク履歴をインデックス更新 ---
+            from src.task_history_indexer import TaskHistoryIndexer
+            try:
+                indexer = TaskHistoryIndexer()
+                count = indexer.index_recent(hours=24)
+                self._log(f"Pre-batch index: {count} tasks indexed")
+            except Exception as e:
+                self._log(f"Pre-batch index failed: {e}")
 
-        # 全プロジェクトのTODOを実行
-        all_results = self.run_all_active(
-            max_tasks_per_project=max_tasks_per_project,
-            stop_on_failure=stop_on_failure,
-        )
+            # 全プロジェクトのTODOを実行
+            all_results = self.run_all_active(
+                max_tasks_per_project=max_tasks_per_project,
+                stop_on_failure=stop_on_failure,
+            )
 
-        if not all_results:
-            self._log("実行するタスクがありませんでした")
-            return
+            if not all_results:
+                self._log("実行するタスクがありませんでした")
+                return
 
-        # レポート生成
-        report = self.generate_batch_report(all_results)
-        self._log(report)
+            # レポート生成
+            report = self.generate_batch_report(all_results)
+            self._log(report)
 
-        # レポートをファイル保存
-        reports_dir = os.path.expanduser(
-            "~/projects/langgraph-orchestrator/reports"
-        )
-        os.makedirs(reports_dir, exist_ok=True)
-        report_path = os.path.join(
-            reports_dir,
-            f"batch_{datetime.now().strftime('%Y-%m-%d_%H%M')}.md"
-        )
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(report)
+            # レポートをファイル保存
+            reports_dir = os.path.expanduser(
+                "~/projects/langgraph-orchestrator/reports"
+            )
+            os.makedirs(reports_dir, exist_ok=True)
+            report_path = os.path.join(
+                reports_dir,
+                f"batch_{datetime.now().strftime('%Y-%m-%d_%H%M')}.md"
+            )
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report)
 
-        # 日次レポートも生成
-        try:
-            from src.report_generator import ReportGenerator
-            rg = ReportGenerator()
-            rg.generate_and_save_daily()
-        except Exception:
-            pass
+            # 日次レポートも生成
+            try:
+                from src.report_generator import ReportGenerator
+                rg = ReportGenerator()
+                rg.generate_and_save_daily()
+            except Exception:
+                pass
 
-        # Discord通知
-        if notify_discord:
-            self._send_discord_notification(report)
+            # Discord通知
+            if notify_discord:
+                self._send_discord_notification(report)
 
-        # --- P10a: 週次バッチ時に改善提案をDiscord通知 ---
-        try:
-            from src.self_improver import SelfImprover
-            improver = SelfImprover()
-            analysis = improver.analyze(days=7)
-            suggestions = improver.generate_suggestions(analysis)
-            if suggestions:
-                improver.notify_suggestions(suggestions)
-                self._log(f"P10a: {len(suggestions)}件の改善提案をDiscordに送信")
-            else:
-                self._log("P10a: 改善提案なし")
-        except Exception as e:
-            self._log(f"P10a notification failed: {e}")
+            # --- P10a: 週次バッチ時に改善提案をDiscord通知 ---
+            try:
+                from src.self_improver import SelfImprover
+                improver = SelfImprover()
+                analysis = improver.analyze(days=7)
+                suggestions = improver.generate_suggestions(analysis)
+                if suggestions:
+                    improver.notify_suggestions(suggestions)
+                    self._log(f"P10a: {len(suggestions)}件の改善提案をDiscordに送信")
+                else:
+                    self._log("P10a: 改善提案なし")
+            except Exception as e:
+                self._log(f"P10a notification failed: {e}")
+
+        finally:
+            # #17: バッチ終了時（正常・異常どちらでも）全モデルをアンロード
+            # → 昼間のメモリをクリーンな状態に戻す
+            self._log("バッチ終了: Ollamaモデルをアンロードします")
+            try:
+                from src.model_manager import unload_all_models
+                n = unload_all_models()
+                self._log(f"モデルアンロード完了（{n}件）。昼間のメモリが解放されました。")
+            except Exception as e:
+                self._log(f"モデルアンロード失敗: {e}")
 
         self._log("=== 夜間バッチ完了 ===")
 
